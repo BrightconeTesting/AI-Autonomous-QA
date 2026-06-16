@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: aqa-celery
+Version: 0.1.0
+Summary: Celery workers for AI Autonomous QA Platform
+Requires-Python: >=3.11
+Requires-Dist: aqa-shared
+Requires-Dist: aqa-agents
+Requires-Dist: aqa-discovery
+Requires-Dist: celery[redis]<6,>=5.4
+Requires-Dist: python-dotenv<2,>=1.0
+Provides-Extra: dev
+Requires-Dist: ruff>=0.8; extra == "dev"

@@ -1,0 +1,54 @@
+# Full stack for CI, integration tests, and Phase 2+ (SPEC §25.2, PHASE-2-SPEC §13).
+# Local day-to-day dev uses native PostgreSQL + native Redis instead — see docker-compose.yml.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.full.yml up -d
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: aqa
+      POSTGRES_PASSWORD: aqa
+      POSTGRES_DB: autonomous_qa
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aqa -d autonomous_qa"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Phase 2+: uncomment when Docker images are defined
+  # api:
+  #   build: ../apps/api
+  #   ports: ["3001:3001"]
+  #   env_file: ../.env
+  #   depends_on:
+  #     postgres: { condition: service_healthy }
+  #     redis: { condition: service_healthy }
+  #
+  # worker-celery:
+  #   build: ../workers/celery_app
+  #   env_file: ../.env
+  #   depends_on:
+  #     postgres: { condition: service_healthy }
+  #     redis: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  redisdata:

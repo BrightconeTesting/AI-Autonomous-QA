@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autonomous-qa.dev/schemas/execution-plan/v1",
+  "title": "ExecutionPlan",
+  "type": "object",
+  "required": ["scripts", "parallelism"],
+  "properties": {
+    "scripts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["script_id"],
+        "properties": {
+          "script_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "parallelism": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    }
+  },
+  "additionalProperties": true
+}

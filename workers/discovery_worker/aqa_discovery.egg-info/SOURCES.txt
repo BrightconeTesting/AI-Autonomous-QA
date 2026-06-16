@@ -1,0 +1,12 @@
+pyproject.toml
+aqa_discovery/__init__.py
+aqa_discovery/crawl_settings.py
+aqa_discovery/crawler.py
+aqa_discovery/types.py
+aqa_discovery/url_utils.py
+aqa_discovery/worker.py
+aqa_discovery.egg-info/PKG-INFO
+aqa_discovery.egg-info/SOURCES.txt
+aqa_discovery.egg-info/dependency_links.txt
+aqa_discovery.egg-info/requires.txt
+aqa_discovery.egg-info/top_level.txt

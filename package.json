@@ -1,0 +1,31 @@
+{
+  "name": "autonomous-qa-platform",
+  "private": true,
+  "scripts": {
+    "setup:python": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+    "dev:api": ".venv/bin/uvicorn aqa_api.main:app --reload --host 0.0.0.0 --port 3001",
+    "db:migrate": ".venv/bin/alembic upgrade head",
+    "db:stamp": ".venv/bin/alembic stamp head",
+    "db:revision": ".venv/bin/alembic revision --autogenerate",
+    "verify:shared": ".venv/bin/python scripts/verify_shared.py",
+    "verify:db": ".venv/bin/python scripts/verify_db.py",
+    "verify:redis": ".venv/bin/python scripts/verify_redis.py",
+    "verify:agents": ".venv/bin/python scripts/verify_agents.py",
+    "verify:worker-agents": ".venv/bin/python scripts/verify_worker_agents.py",
+    "verify:celery": ".venv/bin/python scripts/verify_celery_enqueue.py",
+    "verify:validation": ".venv/bin/python scripts/verify_validation.py",
+    "verify:metrics": ".venv/bin/python scripts/verify_metrics.py",
+    "verify:smoke": ".venv/bin/python scripts/verify_smoke.py",
+    "verify:e2e-celery": ".venv/bin/python scripts/verify_e2e_celery.py",
+    "verify:week1-2": ".venv/bin/python scripts/verify_week1_2.py",
+    "verify:apps": ".venv/bin/python scripts/verify_apps_api.py",
+    "verify:pipeline": ".venv/bin/python scripts/verify_pipeline_runs.py",
+    "verify:sse": ".venv/bin/python scripts/verify_sse.py",
+    "verify:discovery": ".venv/bin/python scripts/verify_discovery_worker.py",
+    "playwright:install": ".venv/bin/playwright install chromium",
+    "dev:worker:celery": ".venv/bin/celery -A aqa_celery.app worker -Q discover,design,generate-scripts,execute,report,analyze --loglevel=info",
+    "dev:worker:discovery": ".venv/bin/celery -A aqa_celery.app worker -Q discover,design,generate-scripts --loglevel=info",
+    "dev:worker:executor": ".venv/bin/celery -A aqa_celery.app worker -Q execute --loglevel=info",
+    "dev:worker:report": ".venv/bin/celery -A aqa_celery.app worker -Q report,analyze --loglevel=info"
+  }
+}

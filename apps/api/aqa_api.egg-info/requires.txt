@@ -1,0 +1,9 @@
+aqa-shared
+aqa-celery
+fastapi<1,>=0.115
+uvicorn[standard]<1,>=0.32
+redis<6,>=5
+python-dotenv<2,>=1.0
+psycopg2-binary<3,>=2.9
+pydantic-settings<3,>=2.0
+prometheus-client<1,>=0.21

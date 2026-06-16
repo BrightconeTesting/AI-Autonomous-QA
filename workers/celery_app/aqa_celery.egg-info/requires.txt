@@ -1,0 +1,8 @@
+aqa-shared
+aqa-agents
+aqa-discovery
+celery[redis]<6,>=5.4
+python-dotenv<2,>=1.0
+
+[dev]
+ruff>=0.8

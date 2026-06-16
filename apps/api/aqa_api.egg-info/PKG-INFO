@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: aqa-api
+Version: 0.1.0
+Summary: FastAPI orchestration API for Autonomous QA Platform
+Requires-Python: >=3.11
+Requires-Dist: aqa-shared
+Requires-Dist: aqa-celery
+Requires-Dist: fastapi<1,>=0.115
+Requires-Dist: uvicorn[standard]<1,>=0.32
+Requires-Dist: redis<6,>=5
+Requires-Dist: python-dotenv<2,>=1.0
+Requires-Dist: psycopg2-binary<3,>=2.9
+Requires-Dist: pydantic-settings<3,>=2.0
+Requires-Dist: prometheus-client<1,>=0.21

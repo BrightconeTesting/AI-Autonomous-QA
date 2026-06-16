@@ -1,0 +1,21 @@
+[project]
+name = "aqa-celery"
+version = "0.1.0"
+description = "Celery workers for AI Autonomous QA Platform"
+requires-python = ">=3.11"
+dependencies = [
+  "aqa-shared",
+  "aqa-agents",
+  "aqa-discovery",
+  "celery[redis]>=5.4,<6",
+  "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.8",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aqa_celery*"]

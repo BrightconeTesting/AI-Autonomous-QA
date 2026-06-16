@@ -1,0 +1,12 @@
+# Phase 1 local dev — no Docker services required.
+#
+# Run infrastructure natively on your machine:
+#   PostgreSQL 17  → brew services start postgresql@17
+#   Redis 7+       → brew services start redis  (or your existing local Redis)
+#
+# Configure connection URLs in .env (see .env.example).
+#
+# Full Docker stack (Postgres + Redis + API + workers) is defined for
+# Phase 2 / CI in docker/docker-compose.full.yml — see docs/PHASE-2-SPEC.md §13.
+
+services: {}

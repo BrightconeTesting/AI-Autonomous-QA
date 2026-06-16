@@ -1,0 +1,11 @@
+node_modules/
+.env
+artifacts/
+dist/
+.next/
+.DS_Store
+
+# Python (Celery workers)__pycache__/
+*.py[cod]
+.venv/
+workers/celery_app/.venv/

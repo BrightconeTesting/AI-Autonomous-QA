@@ -2205,9 +2205,30 @@ Reference: [WEEK-03-04-SCAFFOLD-GUIDE.md](./WEEK-03-04-SCAFFOLD-GUIDE.md)
 | Day 14 | SSE live progress stream | **Complete** |
 | Day 15 | DiscoveryWorker scaffold + Playwright | **Complete** |
 | Day 16 | Crawl engine (BFS, scope limits) | **Complete** |
-| Day 17 | Safety exclusions + robots.txt + SPA | **Not started** |
-| Day 18 | Auth (form login, cookies) + credential audit | **Not started** |
-| Day 19 | Element extraction + DB persistence | **Not started** |
-| Day 20 | DiscoveryAgent flows + AppMap API + smoke gate | **Not started** |
+| Day 17 | Safety exclusions + robots.txt + SPA | **Complete** |
+| Day 18 | Auth (form login, cookies) + credential audit | **Complete** |
+| Day 19 | Element extraction + DB persistence | **Complete** |
+| Day 20 | DiscoveryAgent flows + AppMap API + smoke gate | **Complete** |
 
 **Prerequisite:** Week 1–2 complete — `pnpm verify:smoke` passes.
+
+---
+
+## Appendix D: Week 5–6 Scaffold Progress
+
+Reference: [WEEK-05-06-SCAFFOLD-GUIDE.md](./WEEK-05-06-SCAFFOLD-GUIDE.md)
+
+| Day | Scope | Status |
+|-----|--------|--------|
+| Day 21 | `POST .../generate-tests` + pipeline orchestration | **Not started** |
+| Day 22 | TestDesignAgent rule-based templates | **Not started** |
+| Day 23 | TestDesignAgent LLM gap-fill + TestCaseSchema validation | **Not started** |
+| Day 24 | Persist `test_cases` + `GET .../test-cases` | **Not started** |
+| Day 25 | ScriptGenerationAgent plan step + Celery design wire | **Not started** |
+| Day 26 | Playwright TypeScript emit | **Not started** |
+| Day 27 | ValidationModule real (`tsc`, locator policy) | **Not started** |
+| Day 28 | HealingAgent codegen loop | **Not started** |
+| Day 29 | Persist `test_scripts` + artifacts + Celery wire | **Not started** |
+| Day 30 | `verify:smoke-generation` + sprint exit gate | **Not started** |
+
+**Prerequisite:** Week 3–4 complete — `pnpm verify:smoke-discovery` passes.

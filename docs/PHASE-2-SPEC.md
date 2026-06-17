@@ -20,6 +20,7 @@
 5. [Plugin Specifications](#5-plugin-specifications)
 6. [Agent Mode Matrix (Phase 2)](#6-agent-mode-matrix-phase-2)
 7. [Workers](#7-workers)
+   - [7.6 DiscoveryWorker — Off-Domain & External Link Handling](#76-discoveryworker--off-domain--external-link-handling)
 8. [Data Model](#8-data-model)
 9. [API Specification](#9-api-specification)
 10. [Validation Requirements](#10-validation-requirements)
@@ -708,6 +709,54 @@ Additional behavior:
 - Captures full-page PNG snapshots
 - Compares against `visual_baselines` approved version
 - Stores diff images when threshold exceeded
+
+---
+
+### 7.6 DiscoveryWorker — Off-Domain & External Link Handling
+
+> **Phase 1 behavior (unchanged until this ships):** The DiscoveryWorker BFS crawl skips links outside `crawl_config.allowed_domains` and increments `skipped_off_domain` only — no metadata is stored about external URLs. See [SPEC.md §15.1](./SPEC.md#151-scope-limits) and [WEEK-03-04-SCAFFOLD-GUIDE.md](./WEEK-03-04-SCAFFOLD-GUIDE.md) Days 16–17.
+
+#### Problem
+
+Many applications link to external systems after in-app actions. Example: **Lite Transit** creates a support ticket, displays a Jira issue link (e.g. `https://yourcompany.atlassian.net/browse/LIT-123`), and navigates the user to Jira when clicked. Phase 1 treats these as off-domain and discards them with no record — losing information needed for test design and AppMap completeness.
+
+#### Design principles
+
+| Principle | Detail |
+|-----------|--------|
+| **Record vs follow** | Default: capture external link metadata on the source page; do **not** auto-crawl third-party sites during BFS |
+| **Optional follow** | Reuse `allowed_domains` whitelist only when the product owner explicitly adds related domains (e.g. `trust.example.com`) with separate auth (cookies / bearer — §11.2) |
+| **Integration labeling** | Optional `integration_domains[]` or URL patterns in `crawl_config` label links (e.g. Jira, OAuth) — labeling only, not auto-follow |
+| **Data model** | Store per-link data on `elements.attributes` JSONB; aggregate in AppMap artifact `external_links[]` — no new table required for MVP |
+| **Browser crawl exclusions** | Do not browser-crawl social, booking, payment, or OAuth provider login pages |
+
+#### Phase 2 scope
+
+1. **Capture outbound links** during element extraction: source page URL, target URL, hostname, anchor text, `rel` / `target` attributes
+2. **Classify links** with configurable patterns:
+   - `integration` — e.g. `*.atlassian.net/browse/*` → `jira`
+   - `oauth` — OAuth / SSO redirect URLs
+   - `social` — LinkedIn, X, etc.
+   - `unknown` — fallback
+3. **Persist** on `elements.attributes` (e.g. `link_scope: external`, `external_host`, `integration_hint`) and expose aggregated `external_links[]` in AppMap JSON via `GET /apps/:appId/appmap`
+4. **Extend crawl stats** with `recorded_external_links` count (distinct from `skipped_off_domain`)
+5. **Optional opt-in follow** via existing `allowed_domains` + separate credentials when a whitelisted external domain must be mapped
+
+#### Example: Lite Transit → Jira
+
+| Step | Phase 2 behavior |
+|------|------------------|
+| User creates ticket in Lite Transit | Crawl maps create-ticket page and success state |
+| UI shows Jira link with issue key | Record link on success page: `href`, host, issue-key pattern (`LIT-123`) |
+| User clicks link → Jira detail page | **Do not** browser-crawl Jira by default |
+| Test generation | TestDesignAgent asserts link presence and URL pattern on app page |
+| Ticket validation | Phase 3: Jira REST API / `POST /runs/:runId/defects/sync-jira` pattern — not browser discovery |
+
+#### Explicitly out of scope (browser crawl)
+
+- Social media, booking widgets (Calendly), payment gateways (Stripe)
+- OAuth / IdP login pages (Google, Microsoft, Okta)
+- Full Jira / ServiceNow site maps unless domain is explicitly whitelisted with auth
 
 ---
 
@@ -1529,6 +1578,13 @@ Phase 2 applies **model tiering** from [SPEC.md §32.3](./SPEC.md#323-cost-optim
 - [ ] `workers/k6-runner/`
 - [ ] PlaywrightExecutor visual mode flag
 - [ ] Execute queue router by `executorWorkerId`
+
+**Discovery extensions (§7.6 — off-domain / external links)**
+
+- [ ] Outbound link capture in DiscoveryWorker extractors
+- [ ] AppMap `external_links` section in API + artifact
+- [ ] Integration URL pattern config in `crawl_config`
+- [ ] Verify script for external link recording (no third-party site crawl)
 
 **API**
 

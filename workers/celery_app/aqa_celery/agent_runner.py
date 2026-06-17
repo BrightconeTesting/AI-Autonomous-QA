@@ -16,8 +16,10 @@ from aqa_agents import (
     TestDesignAgent,
     TestDesignInput,
 )
-from aqa_discovery.types import PageSnapshot
+from aqa_discovery.auth import AuthError
+from aqa_discovery.types import CrawlHaltError, PageSnapshot
 from aqa_discovery.worker import crawl_application
+from aqa_shared.metrics import aqa_crawl_time_seconds
 from aqa_shared.sse import PipelineEventType, publish_pipeline_event
 from aqa_shared.types.agent import AgentContext, AgentResult
 
@@ -124,9 +126,44 @@ def run_discovery(payload: dict[str, Any]) -> dict[str, Any]:
     crawl_overrides = payload.get("crawlConfigOverrides")
 
     try:
-        crawl_result = crawl_application(application_id, crawl_overrides=crawl_overrides)
+        crawl_result = crawl_application(
+            application_id,
+            crawl_overrides=crawl_overrides,
+            pipeline_run_id=pipeline_run_id,
+            persist=True,
+        )
         if crawl_result.pages:
             snapshot = crawl_result.pages[0]
+        if crawl_result.halted:
+            _publish_stage_failed(
+                pipeline_run_id,
+                DISCOVERY_STAGE,
+                crawl_result.halt_reason or "Crawl halted",
+            )
+            _publish_pipeline_completed(pipeline_run_id, status="failed")
+            return {
+                "ok": False,
+                "pipelineRunId": pipeline_run_id,
+                "agentId": agent.id,
+                "error": crawl_result.halt_reason,
+                "output": {
+                    "discovery_worker": {
+                        "pages": [page.model_dump() for page in crawl_result.pages],
+                        "stats": crawl_result.stats.model_dump(),
+                        "halted": True,
+                        "halt_url": crawl_result.halt_url,
+                        "authenticated": crawl_result.authenticated,
+                    }
+                },
+            }
+    except AuthError as exc:
+        _publish_stage_failed(pipeline_run_id, DISCOVERY_STAGE, exc.message)
+        _publish_pipeline_completed(pipeline_run_id, status="failed")
+        raise
+    except CrawlHaltError as exc:
+        _publish_stage_failed(pipeline_run_id, DISCOVERY_STAGE, exc.message)
+        _publish_pipeline_completed(pipeline_run_id, status="failed")
+        raise
     except ValueError:
         logger.warning(
             "DiscoveryWorker skipped fetch — application not in DB (stub/test payload)",
@@ -143,9 +180,11 @@ def run_discovery(payload: dict[str, Any]) -> dict[str, Any]:
         result = run_agent_task("aqa.tasks.discover", agent.id, payload, _run)
     except Exception as exc:
         _publish_stage_failed(pipeline_run_id, DISCOVERY_STAGE, str(exc))
+        _publish_pipeline_completed(pipeline_run_id, status="failed")
         raise
 
     duration_ms = int((time.monotonic() - started) * 1000)
+    aqa_crawl_time_seconds.observe(duration_ms / 1000.0)
     _publish_stage_completed(pipeline_run_id, DISCOVERY_STAGE, duration_ms)
     _publish_pipeline_completed(pipeline_run_id)
 
@@ -153,6 +192,7 @@ def run_discovery(payload: dict[str, Any]) -> dict[str, Any]:
         worker_output = {
             "pages": [page.model_dump() for page in crawl_result.pages],
             "stats": crawl_result.stats.model_dump(),
+            "authenticated": crawl_result.authenticated,
         }
         if snapshot is not None:
             worker_output["homepage"] = snapshot.model_dump()

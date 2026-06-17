@@ -8,8 +8,10 @@ from sqlalchemy.orm import Session
 
 from aqa_api.deps import get_db
 from aqa_api.schemas.apps import ApplicationListResponse, ApplicationResponse, CreateApplicationRequest
+from aqa_api.schemas.appmap import AppMapResponse
 from aqa_api.schemas.errors import ProblemDetail
 from aqa_api.schemas.pipeline_runs import DiscoverRequest, DiscoverResponse
+from aqa_api.services import appmap as appmap_service
 from aqa_api.services import applications as app_service
 from aqa_api.services import pipeline_runs as pipeline_service
 from aqa_api.services.pipeline_runs import ActivePipelineConflictError
@@ -72,6 +74,21 @@ def get_application(app_id: UUID, request: Request, db: Session = Depends(get_db
         )
         return JSONResponse(status_code=404, content=problem.to_response_body())
     return app_service.to_application_response(app)
+
+
+@router.get("/apps/{app_id}/appmap", response_model=AppMapResponse)
+def get_appmap(app_id: UUID, request: Request, db: Session = Depends(get_db)):
+    appmap = appmap_service.get_appmap(db, app_id)
+    if appmap is None:
+        problem = ProblemDetail(
+            type="https://autonomous-qa.dev/errors/not-found",
+            title="Application Not Found",
+            status=404,
+            detail=f"No application exists with id {app_id}",
+            instance=str(request.url.path),
+        )
+        return JSONResponse(status_code=404, content=problem.to_response_body())
+    return appmap
 
 
 @router.post("/apps/{app_id}/discover", status_code=202, response_model=DiscoverResponse)

@@ -34,6 +34,9 @@ class CrawlConfigInput(BaseModel):
     allowed_domains: list[str] | None = None
     excluded_urls: list[str] = Field(default_factory=list)
     respect_robots_txt: bool = True
+    max_scroll_iterations: int = Field(default=10, ge=0, le=50)
+    wait_until: str = Field(default="domcontentloaded")
+    wait_for_selector: str | None = None
     page_timeout_ms: int | None = Field(default=30000, ge=1000, le=120000)
 
 

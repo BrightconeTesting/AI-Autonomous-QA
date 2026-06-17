@@ -3,6 +3,11 @@
 
 import logging
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from aqa_agents import (
     ALL_AGENTS,

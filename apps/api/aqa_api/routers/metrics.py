@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, Gauge, generate_latest
 
 from aqa_api.config import settings
+from aqa_shared.metrics import aqa_crawl_time_seconds
 from aqa_shared.queue.names import QUEUE_NAMES
 
 router = APIRouter(tags=["metrics"])

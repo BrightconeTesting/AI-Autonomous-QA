@@ -360,9 +360,9 @@ pnpm playwright:install
 | 6 | CAPTCHA/MFA detection → halt with actionable error (§15.8–15.9) | Playwright |
 
 **End-of-day check:**
-- [ ] Logout links not clicked
-- [ ] robots.txt disallowed paths skipped (when enabled)
-- [ ] Juice Shop hash routes discovered as separate pages
+- [x] Logout links not clicked
+- [x] robots.txt disallowed paths skipped (when enabled)
+- [x] Juice Shop hash routes discovered as separate pages
 
 ---
 
@@ -380,9 +380,9 @@ pnpm playwright:install
 | 6 | Verify with Juice Shop login (env `JUICE_SHOP_TEST_USER`) | Manual / script |
 
 **End-of-day check:**
-- [ ] Authenticated crawl reaches post-login pages
-- [ ] Audit row written on credential access
-- [ ] Logs contain no passwords
+- [x] Authenticated crawl reaches post-login pages
+- [x] Audit row written on credential access
+- [x] Logs contain no passwords
 
 ---
 
@@ -408,9 +408,9 @@ pnpm playwright:install
 | `elements` | `page_id`, `tag`, `semantic_selector`, `xpath_fallback`, `text_content` |
 
 **End-of-day check:**
-- [ ] Discover job writes rows to `pages` and `elements`
-- [ ] Screenshot artifacts registered in `artifacts`
-- [ ] `pipeline_runs.status` → `running` → `completed` (or `failed`)
+- [x] Discover job writes rows to `pages` and `elements`
+- [x] Screenshot artifacts registered in `artifacts`
+- [x] `pipeline_runs.status` → `running` → `completed` (or `failed`)
 
 ---
 
@@ -450,14 +450,13 @@ pnpm playwright:install
 ```
 
 **End-of-day check (sprint exit criteria):**
-- [ ] All Week 1–2 verify scripts still pass
-- [ ] `pnpm verify:apps`, `verify:pipeline`, `verify:sse`, `verify:discovery`, `verify:appmap` pass
-- [ ] `pnpm verify:smoke-discovery` — register app → discover → AppMap returned
-- [ ] SSE stream shows discover progress
-- [ ] Ready for Week 5–6 (TestDesignAgent + ScriptGenerationAgent)
+- [x] All Week 1–2 verify scripts still pass
+- [x] `pnpm verify:apps`, `verify:pipeline`, `verify:sse`, `verify:discovery`, `verify:appmap` pass
+- [x] `pnpm verify:smoke-discovery` — register app → discover → AppMap returned
+- [x] SSE stream shows discover progress
+- [x] Ready for Week 5–6 (TestDesignAgent + ScriptGenerationAgent)
 
 ---
-
 ## 5. Discovery pipeline flow (reference)
 
 ```mermaid
@@ -609,7 +608,7 @@ curl -s http://localhost:3001/api/v1/apps/{app_id}/appmap | jq '.stats'
 
 ## 10. Handoff to Week 5–6
 
-When this sprint is complete, the next sprint implements:
+When this sprint is complete, the next sprint is documented in [WEEK-05-06-SCAFFOLD-GUIDE.md](./WEEK-05-06-SCAFFOLD-GUIDE.md):
 
 1. **`POST /api/v1/apps/:appId/generate-tests`** — enqueue design + script generation
 2. **TestDesignAgent** — rule templates + LLM gap-fill → `ValidationModule`

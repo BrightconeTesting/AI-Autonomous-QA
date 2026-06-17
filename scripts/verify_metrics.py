@@ -19,7 +19,7 @@ def main() -> int:
 
     body = resp.text
     # Python prometheus_client exposes GC/info metrics; process_cpu_* is Linux-only.
-    required = ("python_info", "aqa_queue_depth")
+    required = ("python_info", "aqa_queue_depth", "aqa_crawl_time_seconds")
     missing = [name for name in required if name not in body]
     if missing:
         print(f"FAIL: missing metrics: {missing}", file=sys.stderr)
@@ -31,6 +31,7 @@ def main() -> int:
 
     print("OK /metrics: python_info present")
     print("OK /metrics: aqa_queue_depth gauge present")
+    print("OK /metrics: aqa_crawl_time_seconds histogram present")
     print("verify:metrics OK")
     return 0
 

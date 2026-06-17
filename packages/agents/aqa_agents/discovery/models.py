@@ -15,3 +15,4 @@ class DiscoveryInput(BaseModel):
 class DiscoveryOutput(BaseModel):
     pages: list[dict[str, Any]] = Field(default_factory=list)
     flows: list[dict[str, Any]] = Field(default_factory=list)
+    stats: dict[str, Any] = Field(default_factory=dict)

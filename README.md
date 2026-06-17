@@ -120,17 +120,35 @@ Deterministic validation gates in `packages/aqa_shared/aqa_shared/validation/`:
 
 - [SPEC.md](docs/SPEC.md) — full platform specification
 - [WEEK-01-02-SCAFFOLD-GUIDE.md](docs/WEEK-01-02-SCAFFOLD-GUIDE.md) — Week 1–2 day-by-day plan (Days 1–10) ✅
-- [WEEK-03-04-SCAFFOLD-GUIDE.md](docs/WEEK-03-04-SCAFFOLD-GUIDE.md) — Week 3–4 day-by-day plan (Days 11–20)
+- [WEEK-03-04-SCAFFOLD-GUIDE.md](docs/WEEK-03-04-SCAFFOLD-GUIDE.md) — Week 3–4 day-by-day plan (Days 11–20) ✅
+- [WEEK-05-06-SCAFFOLD-GUIDE.md](docs/WEEK-05-06-SCAFFOLD-GUIDE.md) — Week 5–6 day-by-day plan (Days 21–30)
 - [PHASE-2-SPEC.md](docs/PHASE-2-SPEC.md) — Phase 2 plugins and infrastructure
 - [CELERY-TASK-REGISTRY.md](docs/CELERY-TASK-REGISTRY.md) — task → queue → agent mapping
 
-## What's next (Week 3–4)
+## What's next (Week 3–4) ✅
 
-See [WEEK-03-04-SCAFFOLD-GUIDE.md](docs/WEEK-03-04-SCAFFOLD-GUIDE.md):
+Week 3–4 (Days 11–20) is complete — discovery, AppMap, SSE. See [WEEK-03-04-SCAFFOLD-GUIDE.md](docs/WEEK-03-04-SCAFFOLD-GUIDE.md).
 
-- Application APIs (`POST /api/v1/apps`, discover, appmap)
-- DiscoveryWorker (Playwright crawl) + DiscoveryAgent flow structuring
-- AppMap persistence + SSE pipeline progress
+```bash
+pnpm verify:smoke-discovery   # Week 3–4 exit gate
+```
+
+## What's next (Week 5–6)
+
+Week 5–6 (Days 21–30) adds test case design, Playwright script generation, and real validation gates.
+
+```bash
+pnpm verify:smoke-discovery   # prerequisite
+# After implementation:
+pnpm verify:smoke-generation
+```
+
+See [WEEK-05-06-SCAFFOLD-GUIDE.md](docs/WEEK-05-06-SCAFFOLD-GUIDE.md) for the day-by-day plan.
+
+## What's next (Week 7–8)
+
+- Playwright test execution (`POST .../execute`)
+- Allure reporting + run history
 
 ## License
 

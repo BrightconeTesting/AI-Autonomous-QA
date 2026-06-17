@@ -2,6 +2,8 @@ pyproject.toml
 aqa_discovery/__init__.py
 aqa_discovery/crawl_settings.py
 aqa_discovery/crawler.py
+aqa_discovery/robots.py
+aqa_discovery/safety.py
 aqa_discovery/types.py
 aqa_discovery/url_utils.py
 aqa_discovery/worker.py

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Hover Menu Fixture</title>
+  <style>
+    nav ul { list-style: none; padding: 0; display: flex; gap: 1rem; }
+    .has-submenu { position: relative; }
+    .submenu { display: none; position: absolute; background: #fff; border: 1px solid #ccc; padding: 0.5rem; min-width: 10rem; }
+    .has-submenu.open .submenu { display: block; }
+    .submenu [role="menuitem"] { display: block; padding: 0.25rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Hover Menu Test</h1>
+  <nav>
+    <ul>
+      <li><a href="#">Home</a></li>
+      <li class="has-submenu" id="reports-menu">
+        <button type="button" aria-haspopup="menu" aria-expanded="false">Reports</button>
+        <div class="submenu" role="menu">
+          <button type="button" role="menuitem">Monthly Report</button>
+          <button type="button" role="menuitem">Secret Report Action</button>
+        </div>
+      </li>
+    </ul>
+  </nav>
+  <script>
+    const menu = document.getElementById('reports-menu');
+    const trigger = menu.querySelector('[aria-haspopup="menu"]');
+    trigger.addEventListener('mouseenter', () => {
+      menu.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    });
+    menu.addEventListener('mouseleave', () => {
+      menu.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    });
+  </script>
+</body>
+</html>

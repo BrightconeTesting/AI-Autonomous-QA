@@ -38,6 +38,25 @@ class CrawlConfigInput(BaseModel):
     wait_until: str = Field(default="domcontentloaded")
     wait_for_selector: str | None = None
     page_timeout_ms: int | None = Field(default=30000, ge=1000, le=120000)
+    enable_cic: bool = False
+    cic_mode: str = Field(default="fast")
+    max_states_per_url: int = Field(default=20, ge=1, le=100)
+    max_states_total: int = Field(default=200, ge=1, le=2000)
+    max_interactions_per_url: int = Field(default=50, ge=1, le=200)
+    max_interactions_per_state: int = Field(default=5, ge=1, le=50)
+    max_interaction_depth: int = Field(default=5, ge=1, le=10)
+    interaction_wait_strategy: str = Field(default="fixed_ms")
+    interaction_wait_ms: int = Field(default=350, ge=50, le=5000)
+    cic_in_page_only: bool = True
+    cic_dom_stable_rounds: int = Field(default=4, ge=2, le=10)
+    cic_screenshot_all_states: bool = False
+    safe_form_fill: bool = False
+    cic_rich_interactions: bool = True
+    cic_enable_iframes: bool = True
+    cic_max_options_per_select: int = Field(default=3, ge=1, le=20)
+    cic_enable_tables: bool = True
+    cic_enable_date_pickers: bool = True
+    cic_max_graph_paths_per_page: int = Field(default=5, ge=1, le=20)
 
 
 class CreateApplicationRequest(BaseModel):

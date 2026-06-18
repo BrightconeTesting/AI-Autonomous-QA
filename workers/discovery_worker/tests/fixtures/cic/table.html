@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Table Fixture</title>
+  <style>
+    #page-2 { display: none; }
+    #page-2.active { display: block; }
+  </style>
+</head>
+<body>
+  <h1>Table Test</h1>
+  <table id="data-table">
+    <thead><tr><th>Name</th><th>Action</th></tr></thead>
+    <tbody id="page-1">
+      <tr>
+        <td>Alice</td>
+        <td><button type="button" data-row="1">View row 1</button></td>
+      </tr>
+      <tr>
+        <td>Bob</td>
+        <td><button type="button" data-row="2">View row 2</button></td>
+      </tr>
+    </tbody>
+    <tbody id="page-2">
+      <tr>
+        <td>Carol</td>
+        <td><button type="button" data-row="3">Secret Row Action</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <button type="button" id="next-page" aria-label="Next page">Next</button>
+  <div id="row-detail" hidden><p id="detail-text">Row detail panel</p></div>
+  <script>
+    document.getElementById('next-page').addEventListener('click', () => {
+      document.getElementById('page-1').style.display = 'none';
+      document.getElementById('page-2').classList.add('active');
+      document.getElementById('page-2').style.display = 'table-row-group';
+    });
+    document.querySelectorAll('[data-row]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('detail-text').textContent = 'Opened row ' + btn.dataset.row;
+        document.getElementById('row-detail').hidden = false;
+      });
+    });
+  </script>
+</body>
+</html>

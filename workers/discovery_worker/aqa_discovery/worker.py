@@ -49,6 +49,8 @@ def _publish_crawl_progress(
     pages_discovered: int,
     max_pages: int,
     current_url: str,
+    states_discovered: int = 0,
+    interactions_executed: int = 0,
 ) -> None:
     publish_pipeline_event(
         pipeline_run_id,
@@ -58,6 +60,8 @@ def _publish_crawl_progress(
             "pages_discovered": pages_discovered,
             "max_pages": max_pages,
             "current_url": current_url,
+            "states_discovered": states_discovered,
+            "interactions_executed": interactions_executed,
         },
     )
 
@@ -68,6 +72,7 @@ def crawl_application(
     crawl_overrides: dict | None = None,
     pipeline_run_id: str | None = None,
     persist: bool = True,
+    live_progress: bool = False,
     db: Session | None = None,
 ) -> CrawlResult:
     """Load application config, authenticate when configured, and run BFS crawl."""
@@ -113,11 +118,32 @@ def crawl_application(
                 pages_discovered=stats.pages_crawled,
                 max_pages=stats.max_pages,
                 current_url=_snapshot.url,
+                states_discovered=stats.states_discovered,
+                interactions_executed=stats.interactions_executed,
+            )
+        if live_progress:
+            states = len(_snapshot.states)
+            discovered = len(_snapshot.discovered_urls)
+            cic_tag = f" states={states}" if states else ""
+            disc_tag = f" discovered={discovered}" if discovered else ""
+            print(
+                f"  [CIC] page {stats.pages_crawled}/{stats.max_pages} "
+                f"depth={_snapshot.depth} "
+                f"elements={len(_snapshot.elements)}{cic_tag}{disc_tag} "
+                f"interactions={stats.interactions_executed} "
+                f"| {(_snapshot.title or _snapshot.url)[:70]}",
+                flush=True,
             )
 
     try:
         with CrawlSession(
             page_timeout_ms=settings.page_timeout_ms,
+            headless=settings.headless,
+            browser_channel=settings.browser_channel,
+            user_agent=settings.user_agent,
+            locale=settings.locale,
+            viewport_width=settings.viewport_width,
+            viewport_height=settings.viewport_height,
             app_id=app.app_id if persist_enabled else None,
             capture_artifacts=persist_enabled,
         ) as crawl:
@@ -141,7 +167,11 @@ def crawl_application(
                         authenticated=False,
                     )
 
-            result = crawl.crawl_bfs(start_urls, settings, on_progress=_on_progress if pipeline_run_id else None)
+            result = crawl.crawl_bfs(
+                start_urls,
+                settings,
+                on_progress=_on_progress if (pipeline_run_id or live_progress) else None,
+            )
             result.authenticated = authenticated
 
             if persist_enabled and pipeline_uuid is not None and result.pages:
@@ -165,6 +195,7 @@ def crawl_application(
                             pipeline_uuid,
                             page_count=persist_result.page_count,
                             element_count=persist_result.element_count,
+                            state_count=persist_result.state_count,
                         )
                 except Exception as exc:
                     logger.exception(

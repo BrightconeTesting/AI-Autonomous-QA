@@ -24,6 +24,7 @@ class AppMapElement(BaseModel):
     semantic_selector: str | None = None
     xpath_fallback: str | None = None
     text_content: str | None = None
+    state_id: UUID | None = None
 
 
 class AppMapFlow(BaseModel):
@@ -34,16 +35,39 @@ class AppMapFlow(BaseModel):
     steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class AppMapState(BaseModel):
+    state_id: UUID
+    page_id: UUID
+    state_key: str
+    fingerprint: str | None = None
+    title: str | None = None
+    interaction_depth: int = 0
+    parent_state_key: str | None = None
+    trigger_action: dict[str, Any] = Field(default_factory=dict)
+
+
+class AppMapTransition(BaseModel):
+    transition_id: UUID
+    from_state_id: UUID
+    to_state_id: UUID
+    action: dict[str, Any] = Field(default_factory=dict)
+
+
 class AppMapStats(BaseModel):
     page_count: int = 0
     element_count: int = 0
     flow_count: int = 0
+    state_count: int = 0
+    interaction_count: int = 0
 
 
 class AppMapResponse(BaseModel):
+    schema_version: int = 1
     application_id: UUID
     last_crawl_at: datetime | None = None
     pages: list[AppMapPage]
     elements: list[AppMapElement]
     flows: list[AppMapFlow]
     stats: AppMapStats
+    states: list[AppMapState] = Field(default_factory=list)
+    transitions: list[AppMapTransition] = Field(default_factory=list)

@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from aqa_discovery.interaction_safety import build_interaction_key
 from aqa_discovery.types import ElementSnapshot
 
 _INTERACTIVE_SELECTOR = (
     "a[href], button, input:not([type='hidden']), select, textarea, "
     "[role='button'], [role='link'], [role='checkbox'], [role='radio'], "
-    "[role='textbox'], [role='combobox'], [role='menuitem'], [role='tab'], summary"
+    "[role='textbox'], [role='combobox'], [role='menuitem'], [role='tab'], "
+    "[role='option'], [role='listbox'], [role='gridcell'], [role='row'], "
+    "table button, table a[href], summary"
 )
 
 _EXTRACT_ELEMENTS_JS = """
@@ -69,10 +72,15 @@ elements => elements.map(element => {
   }
 
   const attributes = {};
-  for (const attr of ['id', 'name', 'type', 'href', 'value', 'class', 'aria-label', 'data-testid']) {
+  for (const attr of ['id', 'name', 'type', 'href', 'value', 'class', 'aria-label', 'data-testid', 'aria-expanded', 'aria-haspopup', 'aria-controls', 'data-modal']) {
     const value = element.getAttribute(attr);
     if (value) attributes[attr] = value.slice(0, 500);
   }
+
+  const rect = element.getBoundingClientRect();
+  const style = window.getComputedStyle(element);
+  const visible = rect.width > 0 && rect.height > 0
+    && style.visibility !== 'hidden' && style.display !== 'none' && parseFloat(style.opacity || '1') > 0;
 
   return {
     tag,
@@ -84,6 +92,7 @@ elements => elements.map(element => {
     accessibleName,
     xpath: getXPath(element),
     attributes,
+    visible,
   };
 })
 """
@@ -148,9 +157,13 @@ def build_locators(raw: dict[str, Any]) -> tuple[str | None, str | None]:
     return None, xpath
 
 
-def extract_elements(page) -> list[ElementSnapshot]:
-    """Extract interactive elements from an open Playwright page."""
-    raw_elements: list[dict[str, Any]] = page.eval_on_selector_all(
+def extract_elements(page, scope=None) -> list[ElementSnapshot]:
+    """Extract interactive elements from an open Playwright page or CIC scope."""
+    target = scope if scope is not None else page
+    eval_fn = getattr(target, "eval_on_selector_all", None)
+    if eval_fn is None:
+        eval_fn = page.eval_on_selector_all
+    raw_elements: list[dict[str, Any]] = eval_fn(
         _INTERACTIVE_SELECTOR,
         _EXTRACT_ELEMENTS_JS,
     )
@@ -165,18 +178,41 @@ def extract_elements(page) -> list[ElementSnapshot]:
             continue
         seen.add(dedupe_key)
 
-        snapshots.append(
-            ElementSnapshot(
-                tag_name=str(raw.get("tag") or "unknown")[:64],
-                role=(raw.get("role") or None),
-                text_content=(raw.get("text") or None),
-                semantic_selector=semantic,
-                xpath_fallback=xpath,
-                attributes=dict(raw.get("attributes") or {}),
-            )
+        item = ElementSnapshot(
+            tag_name=str(raw.get("tag") or "unknown")[:64],
+            role=(raw.get("role") or None),
+            text_content=(raw.get("text") or None),
+            semantic_selector=semantic,
+            xpath_fallback=xpath,
+            attributes=dict(raw.get("attributes") or {}),
+            is_visible=bool(raw.get("visible", True)),
         )
+        item.interaction_key = build_interaction_key(item)
+        snapshots.append(item)
 
     return snapshots
+
+
+def diff_elements(before: list[ElementSnapshot], after: list[ElementSnapshot]) -> list[ElementSnapshot]:
+    """Return elements in after that are not in before (by interaction_key)."""
+    before_keys = {e.interaction_key or build_interaction_key(e) for e in before}
+    new_elements: list[ElementSnapshot] = []
+    for element in after:
+        key = element.interaction_key or build_interaction_key(element)
+        if key not in before_keys and element.is_visible:
+            new_elements.append(element)
+    return new_elements
+
+
+def detect_dialog_titles(page) -> list[str]:
+    """Return visible dialog titles for fingerprinting."""
+    try:
+        return page.eval_on_selector_all(
+            "[role='dialog'], [aria-modal='true']",
+            "els => els.map(e => (e.getAttribute('aria-label') || e.querySelector('h1,h2,h3')?.textContent || '').trim()).filter(Boolean)",
+        )
+    except Exception:
+        return []
 
 
 def save_page_screenshot(page, dest_path) -> int:

@@ -154,11 +154,94 @@ class Page(Base):
 
     application: Mapped[Application] = relationship(back_populates="pages")
     elements: Mapped[list[Element]] = relationship(back_populates="page")
+    states: Mapped[list[PageState]] = relationship(back_populates="page")
 
     __table_args__ = (
         UniqueConstraint("app_id", "url", name="idx_pages_app_url"),
         Index("idx_pages_app_id", "app_id"),
         Index("idx_pages_discovered_at", "app_id", discovered_at.desc()),
+    )
+
+
+class PageState(Base):
+    __tablename__ = "page_states"
+
+    state_id: Mapped[uuid.UUID] = mapped_column(
+        "state_id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    page_id: Mapped[uuid.UUID] = mapped_column(
+        "page_id", UUID(as_uuid=True), ForeignKey("pages.page_id", ondelete="CASCADE")
+    )
+    state_key: Mapped[str] = mapped_column("state_key", String(64))
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
+    title: Mapped[str | None] = mapped_column(String(512))
+    screenshot_path: Mapped[str | None] = mapped_column("screenshot_path", Text)
+    interaction_depth: Mapped[int] = mapped_column("interaction_depth", Integer, server_default="0")
+    parent_state_key: Mapped[str | None] = mapped_column("parent_state_key", String(64))
+    trigger_action: Mapped[Any] = mapped_column(JSONB, server_default="{}")
+    discovered_at: Mapped[datetime] = mapped_column(
+        "discovered_at", DateTime(timezone=False), server_default=func.now()
+    )
+
+    page: Mapped[Page] = relationship(back_populates="states")
+    elements: Mapped[list[Element]] = relationship(back_populates="state")
+
+    __table_args__ = (
+        UniqueConstraint("page_id", "state_key", name="page_states_page_id_state_key_key"),
+        Index("idx_page_states_page_id", "page_id"),
+    )
+
+
+class StateTransition(Base):
+    __tablename__ = "state_transitions"
+
+    transition_id: Mapped[uuid.UUID] = mapped_column(
+        "transition_id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        "app_id", UUID(as_uuid=True), ForeignKey("applications.app_id", ondelete="CASCADE")
+    )
+    from_state_id: Mapped[uuid.UUID] = mapped_column(
+        "from_state_id", UUID(as_uuid=True), ForeignKey("page_states.state_id", ondelete="CASCADE")
+    )
+    to_state_id: Mapped[uuid.UUID] = mapped_column(
+        "to_state_id", UUID(as_uuid=True), ForeignKey("page_states.state_id", ondelete="CASCADE")
+    )
+    action: Mapped[Any] = mapped_column(JSONB, server_default="{}")
+    discovered_at: Mapped[datetime] = mapped_column(
+        "discovered_at", DateTime(timezone=False), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_state_transitions_app_id", "app_id"),
+        Index("idx_state_transitions_from_state", "from_state_id"),
+        Index("idx_state_transitions_to_state", "to_state_id"),
+    )
+
+
+class PageDiscovery(Base):
+    __tablename__ = "page_discoveries"
+
+    discovery_id: Mapped[uuid.UUID] = mapped_column(
+        "discovery_id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        "app_id", UUID(as_uuid=True), ForeignKey("applications.app_id", ondelete="CASCADE")
+    )
+    url: Mapped[str] = mapped_column(Text)
+    discovered_via: Mapped[str] = mapped_column("discovered_via", String(32), server_default="link")
+    source_page_id: Mapped[uuid.UUID | None] = mapped_column(
+        "source_page_id", UUID(as_uuid=True), ForeignKey("pages.page_id", ondelete="SET NULL")
+    )
+    source_state_key: Mapped[str | None] = mapped_column("source_state_key", String(64))
+    trigger_action: Mapped[Any] = mapped_column(JSONB, server_default="{}")
+    discovered_at: Mapped[datetime] = mapped_column(
+        "discovered_at", DateTime(timezone=False), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("app_id", "url", name="page_discoveries_app_id_url_key"),
+        Index("idx_page_discoveries_app_id", "app_id"),
     )
 
 
@@ -171,6 +254,9 @@ class Element(Base):
     page_id: Mapped[uuid.UUID] = mapped_column(
         "page_id", UUID(as_uuid=True), ForeignKey("pages.page_id", ondelete="CASCADE")
     )
+    state_id: Mapped[uuid.UUID | None] = mapped_column(
+        "state_id", UUID(as_uuid=True), ForeignKey("page_states.state_id", ondelete="CASCADE")
+    )
     tag_name: Mapped[str] = mapped_column("tag_name", String(64))
     role: Mapped[str | None] = mapped_column(String(64))
     text_content: Mapped[str | None] = mapped_column("text_content", Text)
@@ -179,8 +265,12 @@ class Element(Base):
     attributes: Mapped[Any] = mapped_column(JSONB, server_default="{}")
 
     page: Mapped[Page] = relationship(back_populates="elements")
+    state: Mapped[PageState | None] = relationship(back_populates="elements")
 
-    __table_args__ = (Index("idx_elements_page_id", "page_id"),)
+    __table_args__ = (
+        Index("idx_elements_page_id", "page_id"),
+        Index("idx_elements_state_id", "state_id"),
+    )
 
 
 class Flow(Base):

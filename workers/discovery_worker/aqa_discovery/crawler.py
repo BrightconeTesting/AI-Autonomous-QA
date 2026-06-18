@@ -71,11 +71,21 @@ class CrawlSession:
         *,
         page_timeout_ms: int = DEFAULT_PAGE_TIMEOUT_MS,
         headless: bool = True,
+        browser_channel: str | None = None,
+        user_agent: str | None = None,
+        locale: str | None = None,
+        viewport_width: int | None = None,
+        viewport_height: int | None = None,
         app_id: uuid.UUID | None = None,
         capture_artifacts: bool = False,
     ) -> None:
         self.page_timeout_ms = page_timeout_ms
         self.headless = headless
+        self.browser_channel = browser_channel
+        self.user_agent = user_agent
+        self.locale = locale
+        self.viewport_width = viewport_width
+        self.viewport_height = viewport_height
         self.app_id = app_id
         self.capture_artifacts = capture_artifacts
         self._playwright = None
@@ -86,9 +96,29 @@ class CrawlSession:
         from playwright.sync_api import sync_playwright
 
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=self.headless)
-        self._context = self._browser.new_context()
-        logger.info("DiscoveryWorker browser started", extra={"headless": self.headless})
+        launch_kwargs: dict = {"headless": self.headless}
+        if self.browser_channel:
+            launch_kwargs["channel"] = self.browser_channel
+        self._browser = self._playwright.chromium.launch(**launch_kwargs)
+        context_kwargs: dict = {}
+        if self.user_agent:
+            context_kwargs["user_agent"] = self.user_agent
+        if self.locale:
+            context_kwargs["locale"] = self.locale
+        if self.viewport_width and self.viewport_height:
+            context_kwargs["viewport"] = {
+                "width": self.viewport_width,
+                "height": self.viewport_height,
+            }
+        self._context = self._browser.new_context(**context_kwargs)
+        logger.info(
+            "DiscoveryWorker browser started",
+            extra={
+                "headless": self.headless,
+                "browserChannel": self.browser_channel,
+                "hasCustomUserAgent": bool(self.user_agent),
+            },
+        )
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -202,11 +232,14 @@ class CrawlSession:
 
         return links
 
-    def _visit_page(self, url: str, *, depth: int, settings: CrawlSettings) -> tuple[PageSnapshot, list[str]]:
+    def _visit_page(
+        self, url: str, *, depth: int, settings: CrawlSettings, stats: CrawlStats | None = None
+    ) -> tuple[PageSnapshot, list[str]]:
         if self._context is None:
             raise RuntimeError("CrawlSession is not active — use as a context manager")
 
         page = self._context.new_page()
+        crawl_stats = stats or CrawlStats()
         try:
             response = page.goto(
                 url,
@@ -223,9 +256,66 @@ class CrawlSession:
             self._perform_infinite_scroll(page, max_iterations=settings.max_scroll_iterations)
 
             status = response.status if response is not None else 0
+            baseline_url = page.url
+
+            if settings.enable_cic:
+                from aqa_discovery.cic.session import run_cic_session
+
+                cic_result = run_cic_session(
+                    page,
+                    baseline_url=baseline_url,
+                    status=status,
+                    settings=settings,
+                    stats=crawl_stats,
+                    app_id=self.app_id,
+                    capture_artifacts=self.capture_artifacts,
+                    extract_links_fn=lambda p, u: self._extract_links(p, u),
+                    detect_blockers=self._detect_captcha_or_mfa,
+                )
+                baseline_state = cic_result.states[0] if cic_result.states else None
+                elements = baseline_state.elements if baseline_state else extract_elements(page)
+                screenshot_path: str | None = None
+                if self.capture_artifacts and self.app_id is not None:
+                    dest = screenshot_path_for_page(app_id=self.app_id, url=baseline_url)
+                    if baseline_state and baseline_state.screenshot_path:
+                        screenshot_path = baseline_state.screenshot_path
+                    else:
+                        save_page_screenshot(page, dest)
+                        screenshot_path = str(dest)
+
+                html_len = baseline_state.html_length if baseline_state else len(page.content())
+                snapshot = PageSnapshot(
+                    url=baseline_url,
+                    title=page.title(),
+                    status=status,
+                    html_length=html_len,
+                    depth=depth,
+                    elements=elements,
+                    screenshot_path=screenshot_path,
+                    states=cic_result.states,
+                    transitions=cic_result.transitions,
+                    discovered_urls=cic_result.discovered_urls,
+                )
+                links = list(cic_result.all_links)
+                if not links:
+                    links = self._extract_links(page, baseline_url)
+                logger.info(
+                    "DiscoveryWorker CIC page fetched",
+                    extra={
+                        "url": snapshot.url,
+                        "statesFound": len(cic_result.states),
+                        "transitionsFound": len(cic_result.transitions),
+                        "discoveredUrls": len(cic_result.discovered_urls),
+                        "linksFound": len(links),
+                        "elementsFound": len(elements),
+                        "interactionsExecuted": crawl_stats.interactions_executed,
+                    },
+                )
+                return snapshot, links
+
             html = page.content()
             elements = extract_elements(page)
-            screenshot_path: str | None = None
+            screenshot_path = None
             if self.capture_artifacts and self.app_id is not None:
                 dest = screenshot_path_for_page(app_id=self.app_id, url=page.url)
                 save_page_screenshot(page, dest)
@@ -333,7 +423,7 @@ class CrawlSession:
         while queue and len(pages) < settings.max_pages:
             url, depth = queue.popleft()
             try:
-                snapshot, links = self._visit_page(url, depth=depth, settings=settings)
+                snapshot, links = self._visit_page(url, depth=depth, settings=settings, stats=stats)
             except CrawlHaltError as exc:
                 stats.pages_crawled = len(pages)
                 logger.warning(
@@ -360,9 +450,16 @@ class CrawlSession:
                 on_progress(snapshot, stats)
 
             if depth >= settings.max_depth:
+                all_enqueue = [item.url for item in snapshot.discovered_urls]
+            else:
+                all_enqueue = list(links)
+                for item in snapshot.discovered_urls:
+                    all_enqueue.append(item.url)
+
+            if not all_enqueue:
                 continue
 
-            for link in links:
+            for link in all_enqueue:
                 if len(pages) + len(queue) >= settings.max_pages:
                     break
                 if not self._should_enqueue(
@@ -382,9 +479,12 @@ class CrawlSession:
             "DiscoveryWorker BFS crawl finished",
             extra={
                 "pagesCrawled": stats.pages_crawled,
+                "statesDiscovered": stats.states_discovered,
+                "interactionsExecuted": stats.interactions_executed,
                 "skippedOffDomain": stats.skipped_off_domain,
                 "skippedExcluded": stats.skipped_excluded,
                 "skippedSafety": stats.skipped_safety,
+                "skippedInteractionSafety": stats.skipped_interaction_safety,
                 "skippedRobots": stats.skipped_robots,
                 "skippedDuplicate": stats.skipped_duplicate,
             },

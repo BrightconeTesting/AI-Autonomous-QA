@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Dropdown Fixture</title>
+  <style>
+    .combo { position: relative; display: inline-block; }
+    .combo-list { display: none; border: 1px solid #ccc; background: #fff; position: absolute; z-index: 10; }
+    .combo.open .combo-list { display: block; }
+    .combo-list [role="option"] { padding: 0.5rem 1rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Dropdown Test</h1>
+  <label for="native-status">Native status</label>
+  <select id="native-status" name="status">
+    <option value="">Choose status</option>
+    <option value="active">Active</option>
+    <option value="inactive">Inactive</option>
+  </select>
+
+  <div class="combo" id="custom-combo">
+    <button type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="combo-list">
+      Pick role
+    </button>
+    <div id="combo-list" role="listbox" class="combo-list">
+      <div role="option" id="opt-admin">Admin</div>
+      <div role="option" id="opt-user">User</div>
+      <div role="option" id="opt-secret">Secret Role Option</div>
+    </div>
+  </div>
+  <p id="selection-result">No selection</p>
+
+  <script>
+    const combo = document.getElementById('custom-combo');
+    const btn = combo.querySelector('[role="combobox"]');
+    btn.addEventListener('click', () => {
+      const open = combo.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    combo.querySelectorAll('[role="option"]').forEach(opt => {
+      opt.addEventListener('click', () => {
+        document.getElementById('selection-result').textContent = 'Selected: ' + opt.textContent;
+        combo.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+      });
+    });
+    document.getElementById('native-status').addEventListener('change', (e) => {
+      document.getElementById('selection-result').textContent = 'Native: ' + e.target.value;
+    });
+  </script>
+</body>
+</html>

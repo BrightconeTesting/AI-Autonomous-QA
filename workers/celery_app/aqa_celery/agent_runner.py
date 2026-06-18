@@ -19,7 +19,12 @@ from aqa_agents import (
 from aqa_discovery.auth import AuthError
 from aqa_discovery.types import CrawlHaltError, PageSnapshot
 from aqa_discovery.worker import crawl_application
-from aqa_shared.metrics import aqa_crawl_time_seconds
+from aqa_shared.metrics import (
+    aqa_cic_interactions_total,
+    aqa_cic_safety_skips_total,
+    aqa_cic_states_total,
+    aqa_crawl_time_seconds,
+)
 from aqa_shared.sse import PipelineEventType, publish_pipeline_event
 from aqa_shared.types.agent import AgentContext, AgentResult
 
@@ -185,6 +190,14 @@ def run_discovery(payload: dict[str, Any]) -> dict[str, Any]:
 
     duration_ms = int((time.monotonic() - started) * 1000)
     aqa_crawl_time_seconds.observe(duration_ms / 1000.0)
+    if crawl_result is not None:
+        stats = crawl_result.stats
+        if stats.states_discovered:
+            aqa_cic_states_total.inc(stats.states_discovered)
+        if stats.interactions_executed:
+            aqa_cic_interactions_total.inc(stats.interactions_executed)
+        if stats.skipped_interaction_safety:
+            aqa_cic_safety_skips_total.inc(stats.skipped_interaction_safety)
     _publish_stage_completed(pipeline_run_id, DISCOVERY_STAGE, duration_ms)
     _publish_pipeline_completed(pipeline_run_id)
 

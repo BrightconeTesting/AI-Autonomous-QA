@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Date Picker Fixture</title>
+  <style>
+    #calendar { display: none; border: 1px solid #ccc; padding: 1rem; margin-top: 0.5rem; max-width: 16rem; }
+    #calendar.open { display: block; }
+    .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.25rem; }
+    [role="gridcell"] { padding: 0.35rem; text-align: center; cursor: pointer; border: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <h1>Date Picker Test</h1>
+  <label for="start-date">Start date</label>
+  <input type="date" id="start-date" name="start_date" />
+
+  <button type="button" id="open-calendar" aria-label="Choose date" aria-haspopup="dialog" aria-expanded="false">
+    Pick date
+  </button>
+  <div id="calendar" role="dialog" aria-label="Date calendar">
+    <div role="grid" class="days">
+      <div role="gridcell">1</div>
+      <div role="gridcell">2</div>
+      <div role="gridcell">3</div>
+      <div role="gridcell" id="secret-day">Secret Day Cell</div>
+    </div>
+  </div>
+  <p id="picked-date">No date picked</p>
+
+  <script>
+    const cal = document.getElementById('calendar');
+    const openBtn = document.getElementById('open-calendar');
+    openBtn.addEventListener('click', () => {
+      const open = !cal.classList.contains('open');
+      cal.classList.toggle('open', open);
+      openBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.getElementById('secret-day').addEventListener('click', () => {
+      document.getElementById('picked-date').textContent = 'Picked secret day';
+    });
+    document.getElementById('start-date').addEventListener('change', (e) => {
+      document.getElementById('picked-date').textContent = 'Native: ' + e.target.value;
+    });
+  </script>
+</body>
+</html>

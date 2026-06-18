@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Tab Fixture</title>
+  <style>
+    .panel { display: none; padding: 1rem; border: 1px solid #ccc; margin-top: 0.5rem; }
+    .panel.active { display: block; }
+    [role="tab"][aria-selected="true"] { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>CIC Test Page</h1>
+  <div role="tablist">
+    <button role="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview">Overview</button>
+    <button role="tab" id="tab-details" aria-selected="false" aria-controls="panel-details">Details</button>
+    <button role="tab" id="tab-settings" aria-selected="false" aria-controls="panel-settings">Settings</button>
+  </div>
+  <div id="panel-overview" role="tabpanel" class="panel active">
+    <p>Overview content</p>
+    <a href="/cic-fixture/page2.html">Go to page 2</a>
+  </div>
+  <div id="panel-details" role="tabpanel" class="panel">
+    <p>Details content</p>
+    <button id="hidden-action">Secret Action</button>
+  </div>
+  <div id="panel-settings" role="tabpanel" class="panel">
+    <p>Settings content</p>
+    <input type="text" placeholder="Setting name" aria-label="Setting name" />
+  </div>
+  <details>
+    <summary>Accordion section</summary>
+    <p id="accordion-content">Accordion hidden content</p>
+  </details>
+  <script>
+    document.querySelectorAll('[role="tab"]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('[role="tab"]').forEach(t => t.setAttribute('aria-selected', 'false'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        tab.setAttribute('aria-selected', 'true');
+        document.getElementById(tab.getAttribute('aria-controls')).classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

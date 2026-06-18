@@ -14,7 +14,7 @@ from pathlib import Path
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from aqa_agents.discovery.flows import build_flows_from_pages
+from aqa_agents.discovery.flows import build_flows_from_pages, build_flows_from_states
 from aqa_shared.db.models import (
     Application,
     Artifact,
@@ -23,7 +23,10 @@ from aqa_shared.db.models import (
     Flow,
     FlowSource,
     Page,
+    PageDiscovery,
+    PageState,
     PipelineRun,
+    StateTransition as StateTransitionRow,
 )
 from aqa_shared.db.session import get_session_factory
 
@@ -62,14 +65,27 @@ def _compute_appmap_hash(pages: list[dict], flows: list[dict], element_count: in
     return digest
 
 
-def _load_appmap_records(session: Session, app_id: uuid.UUID) -> tuple[list[Page], list[Element]]:
+def _load_appmap_records(
+    session: Session, app_id: uuid.UUID
+) -> tuple[list[Page], list[Element], list[PageState], list[StateTransitionRow], list[PageDiscovery]]:
     pages = list(session.scalars(select(Page).where(Page.app_id == app_id).order_by(Page.url)).all())
     elements = list(
         session.scalars(
             select(Element).join(Page).where(Page.app_id == app_id).order_by(Element.page_id)
         ).all()
     )
-    return pages, elements
+    states = list(
+        session.scalars(
+            select(PageState).join(Page).where(Page.app_id == app_id).order_by(PageState.page_id)
+        ).all()
+    )
+    transitions = list(
+        session.scalars(select(StateTransitionRow).where(StateTransitionRow.app_id == app_id)).all()
+    )
+    discoveries = list(
+        session.scalars(select(PageDiscovery).where(PageDiscovery.app_id == app_id).order_by(PageDiscovery.url)).all()
+    )
+    return pages, elements, states, transitions, discoveries
 
 
 def _serialize_pages(pages: list[Page]) -> list[dict]:
@@ -89,13 +105,58 @@ def _serialize_elements(elements: list[Element]) -> list[dict]:
         {
             "element_id": str(element.element_id),
             "page_id": str(element.page_id),
+            "state_id": str(element.state_id) if element.state_id else None,
             "tag_name": element.tag_name,
             "role": element.role,
             "semantic_selector": element.semantic_selector,
             "xpath_fallback": element.xpath_fallback,
             "text_content": element.text_content,
+            "state_id": str(element.state_id) if element.state_id else None,
         }
         for element in elements
+    ]
+
+
+def _serialize_states(states: list[PageState]) -> list[dict]:
+    return [
+        {
+            "state_id": str(state.state_id),
+            "page_id": str(state.page_id),
+            "state_key": state.state_key,
+            "fingerprint": state.fingerprint,
+            "title": state.title,
+            "screenshot_path": state.screenshot_path,
+            "interaction_depth": state.interaction_depth,
+            "parent_state_key": state.parent_state_key,
+            "trigger_action": dict(state.trigger_action or {}),
+        }
+        for state in states
+    ]
+
+
+def _serialize_discoveries(discoveries: list[PageDiscovery]) -> list[dict]:
+    return [
+        {
+            "discovery_id": str(row.discovery_id),
+            "url": row.url,
+            "discovered_via": row.discovered_via,
+            "source_page_id": str(row.source_page_id) if row.source_page_id else None,
+            "source_state_key": row.source_state_key,
+            "trigger_action": dict(row.trigger_action or {}),
+        }
+        for row in discoveries
+    ]
+
+
+def _serialize_transitions(transitions: list[StateTransitionRow]) -> list[dict]:
+    return [
+        {
+            "transition_id": str(row.transition_id),
+            "from_state_id": str(row.from_state_id),
+            "to_state_id": str(row.to_state_id),
+            "action": dict(row.action or {}),
+        }
+        for row in transitions
     ]
 
 
@@ -150,8 +211,14 @@ def build_appmap_document(
     pages: list[dict],
     elements: list[dict],
     flows: list[dict],
+    states: list[dict] | None = None,
+    transitions: list[dict] | None = None,
 ) -> dict:
-    return {
+    state_list = states or []
+    transition_list = transitions or []
+    schema_version = 2 if state_list else 1
+    doc = {
+        "schema_version": schema_version,
         "application_id": str(application_id),
         "last_crawl_at": last_crawl_at.isoformat() if last_crawl_at else None,
         "pages": pages,
@@ -170,8 +237,15 @@ def build_appmap_document(
             "page_count": len(pages),
             "element_count": len(elements),
             "flow_count": len(flows),
+            "state_count": len(state_list),
+            "interaction_count": len(transition_list),
         },
     }
+    if state_list:
+        doc["states"] = state_list
+    if transition_list:
+        doc["transitions"] = transition_list
+    return doc
 
 
 def build_and_persist_appmap(
@@ -188,10 +262,24 @@ def build_and_persist_appmap(
         if app is None:
             raise ValueError(f"Application not found: {application_id}")
 
-        pages_orm, elements_orm = _load_appmap_records(session, application_id)
+        pages_orm, elements_orm, states_orm, transitions_orm, discoveries_orm = _load_appmap_records(
+            session, application_id
+        )
         page_dicts = _serialize_pages(pages_orm)
         element_dicts = _serialize_elements(elements_orm)
-        flow_defs = build_flows_from_pages(page_dicts)
+        state_dicts = _serialize_states(states_orm)
+        transition_dicts = _serialize_transitions(transitions_orm)
+        discovery_dicts = _serialize_discoveries(discoveries_orm)
+        if state_dicts or discovery_dicts:
+            flow_defs = build_flows_from_states(
+                page_dicts,
+                state_dicts,
+                transition_dicts,
+                discoveries=discovery_dicts,
+                max_graph_paths_per_page=5,
+            )
+        else:
+            flow_defs = build_flows_from_pages(page_dicts)
 
         persisted_flows = _replace_crawler_flows(session, application_id, flow_defs)
         flow_output = [
@@ -211,6 +299,8 @@ def build_and_persist_appmap(
             pages=page_dicts,
             elements=element_dicts,
             flows=flow_output,
+            states=state_dicts,
+            transitions=transition_dicts,
         )
         appmap_hash = _compute_appmap_hash(page_dicts, flow_output, len(element_dicts))
 
@@ -228,6 +318,7 @@ def build_and_persist_appmap(
                 "page_count": len(page_dicts),
                 "element_count": len(element_dicts),
                 "flow_count": len(flow_output),
+                "state_count": len(state_dicts),
             }
             run.config = config
 
@@ -267,12 +358,16 @@ def load_appmap_for_application(session: Session, app_id: uuid.UUID) -> dict | N
     if app is None:
         return None
 
-    pages_orm, elements_orm = _load_appmap_records(session, app_id)
+    pages_orm, elements_orm, states_orm, transitions_orm, _discoveries_orm = _load_appmap_records(
+        session, app_id
+    )
     flows_orm = list(
         session.scalars(select(Flow).where(Flow.app_id == app_id).order_by(Flow.name)).all()
     )
     page_dicts = _serialize_pages(pages_orm)
     element_dicts = _serialize_elements(elements_orm)
+    state_dicts = _serialize_states(states_orm)
+    transition_dicts = _serialize_transitions(transitions_orm)
     flow_output = [
         {
             "flow_id": str(flow.flow_id),
@@ -289,4 +384,6 @@ def load_appmap_for_application(session: Session, app_id: uuid.UUID) -> dict | N
         pages=page_dicts,
         elements=element_dicts,
         flows=flow_output,
+        states=state_dicts,
+        transitions=transition_dicts,
     )

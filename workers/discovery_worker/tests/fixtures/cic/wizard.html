@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Wizard Fixture</title>
+  <style>
+    .step { display: none; padding: 1rem; border: 1px solid #ccc; margin-top: 0.5rem; }
+    .step.active { display: block; }
+  </style>
+</head>
+<body>
+  <h1>Wizard Test</h1>
+  <div class="step active" id="step1">
+    <p>Step 1 content</p>
+    <button type="button" id="next1">Next</button>
+  </div>
+  <div class="step" id="step2">
+    <p>Step 2 content</p>
+    <button type="button" id="wizard-secret">Wizard Secret Action</button>
+    <button type="button" id="back2">Back</button>
+    <button type="button" id="next2">Continue</button>
+  </div>
+  <div class="step" id="step3">
+    <p>Step 3 complete</p>
+  </div>
+  <script>
+    let step = 1;
+    function show(next) {
+      step = next;
+      document.querySelectorAll('.step').forEach((el, index) => {
+        el.classList.toggle('active', index === step - 1);
+      });
+    }
+    document.getElementById('next1').addEventListener('click', () => show(2));
+    document.getElementById('back2').addEventListener('click', () => show(1));
+    document.getElementById('next2').addEventListener('click', () => show(3));
+  </script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Dynamic Form Fixture</title>
+</head>
+<body>
+  <h1>Dynamic Form Test</h1>
+  <form id="dyn-form" onsubmit="return false;">
+    <label>
+      <input type="checkbox" id="show-extra" /> Show additional field
+    </label>
+    <div id="extra-field" hidden>
+      <label for="company">Company name</label>
+      <input type="text" id="company" name="company" placeholder="Company name" />
+      <button type="button" id="secret-save">Secret Save Action</button>
+    </div>
+  </form>
+  <script>
+    document.getElementById('show-extra').addEventListener('change', (e) => {
+      document.getElementById('extra-field').hidden = !e.target.checked;
+    });
+  </script>
+</body>
+</html>

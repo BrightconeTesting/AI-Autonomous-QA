@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Modal Fixture</title>
+  <style>
+    [role="dialog"][hidden] { display: none; }
+    [role="dialog"] { border: 1px solid #333; padding: 1rem; margin-top: 1rem; max-width: 24rem; }
+  </style>
+</head>
+<body>
+  <h1>Modal Test Page</h1>
+  <button id="open-modal" type="button" aria-haspopup="dialog" aria-controls="info-modal">Open Info</button>
+  <div id="info-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+    <h2 id="modal-title">Info Dialog</h2>
+    <p>Modal-only content here</p>
+    <button id="modal-secret" type="button">Modal Secret Action</button>
+    <button type="button" aria-label="Close">Close</button>
+  </div>
+  <script>
+    const openBtn = document.getElementById('open-modal');
+    const modal = document.getElementById('info-modal');
+    openBtn.addEventListener('click', () => { modal.hidden = false; });
+    modal.querySelector('[aria-label="Close"]').addEventListener('click', () => { modal.hidden = true; });
+  </script>
+</body>
+</html>

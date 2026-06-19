@@ -172,6 +172,8 @@ def _priority(
         return 6
     if role == "button":
         return 6
+    if not in_page_only and role == "link" and tag == "a":
+        return 6
     if rich_interactions and _is_fillable_textbox(element, safe_form_fill=safe_form_fill):
         return 6
     return None
@@ -215,7 +217,7 @@ def plan_interactions(
     for element in elements:
         if not element.is_visible:
             continue
-        if _is_navigation_element(element):
+        if in_page_only and _is_navigation_element(element):
             continue
 
         key = build_interaction_key(element)

@@ -94,3 +94,33 @@ def test_fast_cic_defaults_from_crawl_config() -> None:
     assert settings.interaction_wait_ms == 350
     assert settings.max_interactions_per_url == 12
     assert settings.cic_in_page_only is True
+    assert settings.cic_unlimited_interactions is False
+
+
+def test_full_cic_defaults_from_crawl_config() -> None:
+    settings = CrawlSettings.from_crawl_config(
+        "https://example.com",
+        {"enable_cic": True, "cic_mode": "full"},
+    )
+    assert settings.cic_mode == "full"
+    assert settings.cic_unlimited_interactions is True
+    assert settings.cic_in_page_only is False
+    assert settings.safe_form_fill is True
+    assert settings.max_interaction_depth == 10
+
+
+def test_planner_full_mode_includes_http_links() -> None:
+    elements = [
+        ElementSnapshot(
+            tag_name="a",
+            role="link",
+            text_content="Dashboard",
+            attributes={"href": "/dashboard"},
+            is_visible=True,
+        ),
+        ElementSnapshot(tag_name="button", role="tab", text_content="Settings", is_visible=True),
+    ]
+    actions = plan_interactions(elements, page_url="https://example.com", in_page_only=False)
+    assert len(actions) == 2
+    assert actions[0].role == "tab"
+    assert actions[1].role == "link"

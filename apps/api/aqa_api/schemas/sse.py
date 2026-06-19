@@ -49,3 +49,9 @@ class PipelineSseEventPayload(BaseModel):
 
 
 PIPELINE_SSE_EVENT_TYPES = [event.value for event in PipelineEventType]
+
+
+class PipelineEventListItem(BaseModel):
+    id: str
+    event: str
+    data: dict[str, Any] = Field(default_factory=dict)

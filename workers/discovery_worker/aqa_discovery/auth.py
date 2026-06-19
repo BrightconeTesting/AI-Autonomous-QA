@@ -160,6 +160,30 @@ def inject_cookies(
     )
 
 
+def resolve_auth_credentials(
+    auth_config: dict[str, Any],
+    *,
+    audit: AuditFn | None = None,
+) -> dict[str, str]:
+    """Load email/password from env secret ref or inline credentials."""
+    ref = auth_config.get("credentials_secret_ref")
+    if ref:
+        if audit is not None:
+            audit(CredentialAuditAction.read)
+        return resolve_credentials_secret_ref(str(ref))
+
+    creds = auth_config.get("credentials")
+    if isinstance(creds, dict):
+        email = creds.get("email") or creds.get("username")
+        password = creds.get("password")
+        if email and password:
+            if audit is not None:
+                audit(CredentialAuditAction.read)
+            return {"email": str(email), "password": str(password)}
+
+    raise AuthError("Form login requires credentials_secret_ref or inline credentials")
+
+
 def perform_form_login(
     page,
     *,
@@ -171,31 +195,38 @@ def perform_form_login(
     navigate: bool = True,
 ) -> None:
     """Fill and submit a login form using selectors from auth_config."""
-    ref = auth_config.get("credentials_secret_ref")
-    if not ref:
-        raise AuthError("Form login requires credentials_secret_ref")
-
     if audit is not None:
         audit(CredentialAuditAction.read)
 
-    credentials = resolve_credentials_secret_ref(str(ref))
-    email_selector = auth_config.get("email_selector")
-    password_selector = auth_config.get("password_selector")
-    submit_selector = auth_config.get("submit_selector")
-    if not email_selector or not password_selector or not submit_selector:
-        raise AuthError("Form login requires email_selector, password_selector, and submit_selector")
+    credentials = resolve_auth_credentials(auth_config, audit=None)
+    email_selector = (
+        auth_config.get("email_selector")
+        or "input[name=username], input[type=email], input[name=email], input#username"
+    )
+    password_selector = auth_config.get("password_selector") or "input[type=password], input[name=password]"
+    submit_selector = (
+        auth_config.get("submit_selector") or "button[type=submit], input[type=submit], button:has-text('Login')"
+    )
 
     if navigate:
         login_url = _resolve_login_url(base_url, auth_config)
-        page.goto(login_url, timeout=page_timeout_ms, wait_until="domcontentloaded")
+        try:
+            page.goto(login_url, timeout=page_timeout_ms, wait_until="domcontentloaded")
+        except Exception as exc:
+            raise AuthError(
+                f"Login page did not load within {page_timeout_ms // 1000}s ({login_url}). "
+                "Verify the site opens in a normal browser and is reachable from this machine."
+            ) from exc
         if detect_blockers is not None:
             detect_blockers(page)
 
-    page.locator(str(email_selector)).fill(credentials["email"])
-    page.locator(str(password_selector)).fill(credentials["password"])
-    page.locator(str(submit_selector)).click()
-
-    page.wait_for_load_state("networkidle", timeout=page_timeout_ms)
+    try:
+        page.locator(str(email_selector)).fill(credentials["email"])
+        page.locator(str(password_selector)).fill(credentials["password"])
+        page.locator(str(submit_selector)).click()
+        page.wait_for_load_state("networkidle", timeout=page_timeout_ms)
+    except Exception as exc:
+        raise AuthError(f"Form login failed: {exc}") from exc
     if detect_blockers is not None:
         detect_blockers(page)
 
@@ -204,7 +235,9 @@ def perform_form_login(
         extra={
             "loginUrl": _resolve_login_url(base_url, auth_config) if navigate else page.url,
             "finalUrl": page.url,
-            "credentialsRef": ref,
+            "credentialsSource": "secret_ref"
+            if auth_config.get("credentials_secret_ref")
+            else "inline",
         },
     )
 
@@ -236,8 +269,8 @@ def authenticate_browser(
         )
         return False
 
-    if not auth_config.get("credentials_secret_ref"):
-        logger.info("DiscoveryWorker auth skipped — no credentials_secret_ref or cookies")
+    if not auth_config.get("credentials_secret_ref") and not auth_config.get("credentials"):
+        logger.info("DiscoveryWorker auth skipped — no credentials_secret_ref or inline credentials")
         return False
 
     page = browser_context.new_page()

@@ -17,12 +17,19 @@ class PipelineEventType(str, Enum):
     stage_completed = "stage_completed"
     stage_failed = "stage_failed"
     pipeline_completed = "pipeline_completed"
+    pipeline_cancelled = "pipeline_cancelled"
+    scenario_started = "scenario_started"
+    step_started = "step_started"
+    step_completed = "step_completed"
+    step_screenshot = "step_screenshot"
+    scenario_completed = "scenario_completed"
 
 
 TERMINAL_EVENT_TYPES = frozenset(
     {
         PipelineEventType.stage_failed,
         PipelineEventType.pipeline_completed,
+        PipelineEventType.pipeline_cancelled,
     }
 )
 

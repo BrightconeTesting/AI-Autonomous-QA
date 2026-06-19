@@ -1,0 +1,3 @@
+aqa-shared
+aqa-discovery
+playwright<2,>=1.40

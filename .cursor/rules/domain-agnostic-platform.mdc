@@ -1,0 +1,34 @@
+---
+description: Platform must work for any app/domain — not tied to one demo site
+alwaysApply: true
+---
+
+# Domain-agnostic platform
+
+This is a **generic autonomous QA platform**. It must work for any registered application — e-commerce, HR, banking, internal tools, small SPAs, large multi-module apps — without hardcoding one customer or demo site.
+
+## Do
+
+- Design and explain features in **generic terms**: "any app with AppMap v2", "a crawled application", "flow steps from discovery"
+- Write **verify scripts and tests** with synthetic fixtures or ephemeral DB rows (create app → seed pages/flows → assert → cleanup)
+- Use **AppMap schema** (pages, elements, flows, states, transitions) as the universal input — not site-specific URLs or module names
+- Keep **optional** demo scripts (e.g. OrangeHRM reports) separate from core platform code and verification gates
+
+## Avoid
+
+- Hardcoding demo app UUIDs, URLs, or module names in core API, agents, services, or required verify scripts
+- Using one demo site as the default example in every response or design discussion
+- Assuming PIM, admin, or any particular navigation pattern exists on all apps
+
+## Verification pattern
+
+```python
+# Good: ephemeral app, generic URLs
+app_id = uuid.uuid4()
+session.add(Application(app_id=app_id, base_url="https://example.com/app/"))
+session.add(Page(app_id=app_id, url="https://example.com/app/dashboard"))
+
+# Avoid in core verify: ORANGEHRM_APP_ID = "30b005f1-baee-4e01-9ae6-6886c7b44022"
+```
+
+When a real-app smoke test is useful, mark it **optional/SKIP** — never block `pnpm verify:*` on a specific tenant being present in the DB.

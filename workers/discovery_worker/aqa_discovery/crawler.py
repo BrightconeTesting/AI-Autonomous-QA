@@ -12,6 +12,7 @@ from aqa_discovery.extractors import extract_elements, save_page_screenshot
 from aqa_discovery.persist import screenshot_path_for_page
 from aqa_discovery.robots import RobotsChecker
 from aqa_discovery.safety import is_safety_excluded_link, is_safety_excluded_url
+from aqa_discovery.spa_views import expand_spa_views, is_virtual_view_url
 from aqa_discovery.types import CrawlHaltError, CrawlResult, CrawlStats, PageSnapshot
 from aqa_discovery.url_utils import (
     is_allowed_domain,
@@ -369,6 +370,9 @@ class CrawlSession:
         visited: set[str],
         stats: CrawlStats,
     ) -> bool:
+        if is_virtual_view_url(link):
+            stats.skipped_excluded += 1
+            return False
         if not is_allowed_domain(link, allowed):
             stats.skipped_off_domain += 1
             return False
@@ -422,6 +426,8 @@ class CrawlSession:
 
         while queue and len(pages) < settings.max_pages:
             url, depth = queue.popleft()
+            if is_virtual_view_url(url):
+                continue
             try:
                 snapshot, links = self._visit_page(url, depth=depth, settings=settings, stats=stats)
             except CrawlHaltError as exc:
@@ -444,16 +450,18 @@ class CrawlSession:
                 )
                 continue
 
-            pages.append(snapshot)
-            stats.pages_crawled = len(pages)
-            if on_progress is not None:
-                on_progress(snapshot, stats)
+            for page_snapshot in expand_spa_views(snapshot):
+                pages.append(page_snapshot)
+                stats.pages_crawled = len(pages)
+                if on_progress is not None:
+                    on_progress(page_snapshot, stats)
 
             if depth >= settings.max_depth:
                 all_enqueue = [item.url for item in snapshot.discovered_urls]
             else:
                 all_enqueue = list(links)
-                for item in snapshot.discovered_urls:
+            for item in snapshot.discovered_urls:
+                if item.url not in all_enqueue:
                     all_enqueue.append(item.url)
 
             if not all_enqueue:

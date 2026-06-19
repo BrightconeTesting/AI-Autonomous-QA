@@ -1,0 +1,18 @@
+[project]
+name = "aqa-executor"
+version = "0.1.0"
+description = "Playwright test execution worker for Autonomous QA Platform"
+requires-python = ">=3.11"
+dependencies = [
+  "aqa-shared",
+  "aqa-discovery",
+  "playwright>=1.40,<2",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aqa_executor*"]

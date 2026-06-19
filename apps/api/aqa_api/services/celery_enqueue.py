@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from celery import chain
+
 from aqa_celery.tasks import (
     analyze_task,
     design_task,
@@ -67,6 +69,34 @@ def enqueue_design_task(payload: CeleryTaskPayload) -> EnqueueResult:
 
 def enqueue_generate_scripts_task(payload: CeleryTaskPayload) -> EnqueueResult:
     return _enqueue(generate_scripts_task, CELERY_TASK_GENERATE_SCRIPTS, payload)
+
+
+def enqueue_generate_tests_tasks(
+    payload: CeleryTaskPayload,
+    *,
+    generate_scripts: bool = True,
+) -> EnqueueResult:
+    payload_dict = payload.to_worker_dict()
+    if generate_scripts:
+        async_result = chain(
+            design_task.si(payload_dict),
+            generate_scripts_task.si(payload_dict),
+        ).apply_async()
+        logger.info(
+            "Celery generate-tests chain enqueued",
+            extra={
+                "celeryTask": f"{CELERY_TASK_DESIGN}->{CELERY_TASK_GENERATE_SCRIPTS}",
+                "taskId": async_result.id,
+                "pipelineRunId": payload.pipeline_run_id,
+                "applicationId": payload.application_id,
+            },
+        )
+        return EnqueueResult(
+            task_id=async_result.id,
+            task_name=f"{CELERY_TASK_DESIGN}->{CELERY_TASK_GENERATE_SCRIPTS}",
+            queue=CELERY_TASK_ROUTES[CELERY_TASK_DESIGN],
+        )
+    return _enqueue(design_task, CELERY_TASK_DESIGN, payload)
 
 
 def enqueue_execute_task(payload: CeleryTaskPayload) -> EnqueueResult:

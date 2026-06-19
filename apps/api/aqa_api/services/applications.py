@@ -40,8 +40,15 @@ def public_auth_config(raw: dict | None) -> PublicAuthConfig:
     if is_encrypted_auth_config(raw):
         return PublicAuthConfig(configured=True, type=str(raw.get("type", "form")))
     auth_type = raw.get("type")
-    if not auth_type and not raw.get("credentials_secret_ref") and not raw.get("cookies"):
+    has_material = bool(
+        raw.get("credentials")
+        or raw.get("credentials_secret_ref")
+        or raw.get("cookies")
+    )
+    if not auth_type and not has_material:
         return PublicAuthConfig(configured=False)
+    if not has_material:
+        return PublicAuthConfig(configured=False, type=str(auth_type) if auth_type else None)
     return PublicAuthConfig(configured=True, type=str(auth_type or "form"))
 
 
@@ -63,10 +70,35 @@ def to_application_response(app: Application) -> ApplicationResponse:
     )
 
 
+def _normalize_plain_auth(body: CreateApplicationRequest) -> dict:
+    if not body.auth_config:
+        return {}
+
+    plain_auth = body.auth_config.model_dump(exclude_none=True)
+    creds = body.auth_config.credentials
+    if creds and not creds.is_empty():
+        plain_auth["credentials"] = {
+            "email": creds.resolved_email(),
+            "password": creds.password,
+        }
+    else:
+        plain_auth.pop("credentials", None)
+
+    has_material = bool(
+        plain_auth.get("credentials")
+        or plain_auth.get("credentials_secret_ref")
+        or plain_auth.get("cookies")
+    )
+    if not has_material:
+        return {}
+
+    return plain_auth
+
+
 def create_application(db: Session, body: CreateApplicationRequest) -> Application:
     validate_application_urls(body)
 
-    plain_auth = body.auth_config.model_dump(exclude_none=True) if body.auth_config else {}
+    plain_auth = _normalize_plain_auth(body)
     stored_auth = prepare_auth_config_for_storage(
         plain_auth,
         allow_plaintext=settings.is_development,

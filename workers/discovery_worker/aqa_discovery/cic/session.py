@@ -178,16 +178,22 @@ def _run_cic_on_scope(
     while queue and len(result.states) < settings.max_states_per_url:
         if stats.states_discovered >= settings.max_states_total:
             break
-        if interactions_this_url >= settings.max_interactions_per_url:
+        if (
+            not settings.cic_unlimited_interactions
+            and interactions_this_url >= settings.max_interactions_per_url
+        ):
             break
 
         parent_key, action, page_url, depth = queue.popleft()
 
-        if depth >= settings.max_interaction_depth:
+        if not settings.cic_unlimited_interactions and depth >= settings.max_interaction_depth:
             continue
 
         state_interactions = interactions_this_state.get(parent_key, 0)
-        if state_interactions >= settings.max_interactions_per_state:
+        if (
+            not settings.cic_unlimited_interactions
+            and state_interactions >= settings.max_interactions_per_state
+        ):
             continue
 
         safe, reason = is_safe_to_interact(
@@ -306,13 +312,14 @@ def _enqueue_actions(
     seed_elements: list | None = None,
 ) -> None:
     elements = seed_elements if seed_elements is not None else state.elements
+    max_candidates = None if settings.cic_unlimited_interactions else settings.max_interactions_per_state
     actions = plan_interactions(
         elements,
         page_url=page_url,
         blocked_patterns=settings.blocked_interaction_patterns,
         already_interacted=interacted,
         in_page_only=settings.cic_in_page_only,
-        max_candidates=settings.max_interactions_per_state,
+        max_candidates=max_candidates,
         safe_form_fill=settings.safe_form_fill,
         rich_interactions=settings.cic_rich_interactions,
         enable_tables=settings.cic_enable_tables,

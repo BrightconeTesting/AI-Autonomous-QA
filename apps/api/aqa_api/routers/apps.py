@@ -6,15 +6,19 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from aqa_api.config import settings
 from aqa_api.deps import get_db
 from aqa_api.schemas.apps import ApplicationListResponse, ApplicationResponse, CreateApplicationRequest
 from aqa_api.schemas.appmap import AppMapResponse
 from aqa_api.schemas.errors import ProblemDetail
-from aqa_api.schemas.pipeline_runs import DiscoverRequest, DiscoverResponse
+from aqa_api.schemas.generate_tests import GenerateTestsRequest, GenerateTestsResponse
+from aqa_api.schemas.pipeline_runs import ActivePipelineResponse, DiscoverRequest, DiscoverResponse
 from aqa_api.services import appmap as appmap_service
 from aqa_api.services import applications as app_service
 from aqa_api.services import pipeline_runs as pipeline_service
+from aqa_api.services import test_generation as test_generation_service
 from aqa_api.services.pipeline_runs import ActivePipelineConflictError
+from aqa_api.services.test_generation import AppMapPreconditionError
 from aqa_shared.crypto.auth_config import EncryptionKeyError
 from aqa_shared.security.url_validator import UrlSecurityError
 
@@ -51,6 +55,16 @@ def create_application(
         return _problem_response(request, status=400, title="Validation Error", detail=str(exc))
     except EncryptionKeyError as exc:
         return _problem_response(request, status=400, title="Validation Error", detail=str(exc))
+    except Exception as exc:
+        if settings.is_development:
+            return _problem_response(
+                request,
+                status=500,
+                title="Internal Server Error",
+                detail=str(exc),
+                problem_type="https://autonomous-qa.dev/errors/internal",
+            )
+        raise
     return app_service.to_application_response(app)
 
 
@@ -74,6 +88,24 @@ def get_application(app_id: UUID, request: Request, db: Session = Depends(get_db
         )
         return JSONResponse(status_code=404, content=problem.to_response_body())
     return app_service.to_application_response(app)
+
+
+@router.get("/apps/{app_id}/active-pipeline", response_model=ActivePipelineResponse)
+def get_active_pipeline(app_id: UUID, request: Request, db: Session = Depends(get_db)):
+    app = app_service.get_application(db, app_id)
+    if app is None:
+        problem = ProblemDetail(
+            type="https://autonomous-qa.dev/errors/not-found",
+            title="Application Not Found",
+            status=404,
+            detail=f"No application exists with id {app_id}",
+            instance=str(request.url.path),
+        )
+        return JSONResponse(status_code=404, content=problem.to_response_body())
+    active = pipeline_service.get_active_pipeline_for_app(db, app_id)
+    if active is None:
+        return ActivePipelineResponse(pipeline_run=None)
+    return ActivePipelineResponse(pipeline_run=pipeline_service.to_pipeline_run_response(active))
 
 
 @router.get("/apps/{app_id}/appmap", response_model=AppMapResponse)
@@ -123,3 +155,49 @@ def start_discovery(
         )
         return JSONResponse(status_code=409, content=problem.to_response_body())
     return pipeline_service.to_discover_response(run)
+
+
+@router.post(
+    "/apps/{app_id}/generate-tests",
+    status_code=202,
+    response_model=GenerateTestsResponse,
+)
+def start_generate_tests(
+    app_id: UUID,
+    request: Request,
+    body: GenerateTestsRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    app = app_service.get_application(db, app_id)
+    if app is None:
+        problem = ProblemDetail(
+            type="https://autonomous-qa.dev/errors/not-found",
+            title="Application Not Found",
+            status=404,
+            detail=f"No application exists with id {app_id}",
+            instance=str(request.url.path),
+        )
+        return JSONResponse(status_code=404, content=problem.to_response_body())
+
+    generate_body = body or GenerateTestsRequest()
+    try:
+        run = test_generation_service.start_generate_tests(db, app_id, generate_body)
+    except AppMapPreconditionError as exc:
+        return _problem_response(
+            request,
+            status=422,
+            title="AppMap Required",
+            detail=exc.detail,
+            problem_type="https://autonomous-qa.dev/errors/precondition",
+        )
+    except ActivePipelineConflictError as exc:
+        problem = ProblemDetail(
+            type="https://autonomous-qa.dev/errors/conflict",
+            title="Pipeline Already Running",
+            status=409,
+            detail="Application already has an active pipeline run",
+            instance=str(request.url.path),
+            active_pipeline_run_id=str(exc.active_run_id),
+        )
+        return JSONResponse(status_code=409, content=problem.to_response_body())
+    return test_generation_service.to_generate_tests_response(run)

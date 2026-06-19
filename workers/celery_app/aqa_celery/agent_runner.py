@@ -222,21 +222,129 @@ def run_discovery(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_design(payload: dict[str, Any]) -> dict[str, Any]:
+    import uuid as uuid_mod
+
+    from aqa_agents.test_design.gherkin import attach_gherkin
+    from aqa_shared.db.models import Application, PipelineStage
+    from aqa_shared.db.session import get_session_factory
+    from aqa_shared.pipeline.status import mark_pipeline_completed, mark_pipeline_failed, mark_pipeline_running
+    from aqa_shared.test_cases.persist import persist_test_cases
+
     agent = TestDesignAgent()
+    generate_config = payload.get("generateConfig") or {}
+    pipeline_run_id = payload["pipelineRunId"]
+    application_id = payload["applicationId"]
+    started = time.monotonic()
+    stage = PipelineStage.generate_tests.value
+
+    session = get_session_factory()()
+    try:
+        mark_pipeline_running(session, uuid_mod.UUID(pipeline_run_id), stage=PipelineStage.generate_tests)
+    finally:
+        session.close()
 
     def _run(ctx: AgentContext) -> AgentResult:
-        return agent.run(TestDesignInput(), ctx)
+        design_input = TestDesignInput(
+            max_tests=int(generate_config.get("max_tests", 50)),
+            priorities=list(generate_config.get("priorities") or ["critical", "high"]),
+            use_llm=bool(generate_config.get("use_llm", True)),
+        )
+        return agent.run(design_input, ctx)
 
-    return run_agent_task("aqa.tasks.design", agent.id, payload, _run)
+    try:
+        result = run_agent_task("aqa.tasks.design", agent.id, payload, _run)
+    except Exception as exc:
+        session = get_session_factory()()
+        try:
+            mark_pipeline_failed(session, uuid_mod.UUID(pipeline_run_id), error_message=str(exc))
+        finally:
+            session.close()
+        _publish_stage_failed(pipeline_run_id, stage, str(exc))
+        _publish_pipeline_completed(pipeline_run_id, status="failed")
+        raise
+
+    output = result.get("output") or {}
+    test_cases = output.get("test_cases") if isinstance(output, dict) else []
+    session = get_session_factory()()
+    try:
+        app = session.get(Application, uuid_mod.UUID(application_id))
+        app_name = app.name if app else "Application"
+        payloads = [attach_gherkin(case, app_name=app_name) for case in test_cases]
+        persist_test_cases(
+            session,
+            app_id=uuid_mod.UUID(application_id),
+            pipeline_run_id=uuid_mod.UUID(pipeline_run_id),
+            test_cases=test_cases,
+            steps_payloads=payloads,
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    _publish_stage_completed(pipeline_run_id, stage, duration_ms)
+    result.setdefault("output", {})
+    if isinstance(result["output"], dict):
+        result["output"]["persisted_test_case_count"] = len(test_cases)
+    return result
 
 
 def run_generate_scripts(payload: dict[str, Any]) -> dict[str, Any]:
-    agent = ScriptGenerationAgent()
+    import uuid as uuid_mod
 
-    def _run(ctx: AgentContext) -> AgentResult:
-        return agent.run(ScriptGenerationInput(), ctx)
+    from aqa_shared.db.models import PipelineStage
+    from aqa_shared.db.session import get_session_factory
+    from aqa_shared.pipeline.status import mark_pipeline_completed, mark_pipeline_failed, mark_pipeline_running
+    from aqa_shared.test_cases.persist import persist_test_scripts_for_pipeline
 
-    return run_agent_task("aqa.tasks.generate_scripts", agent.id, payload, _run)
+    pipeline_run_id = payload["pipelineRunId"]
+    started = time.monotonic()
+    stage = PipelineStage.generate_scripts.value
+
+    session = get_session_factory()()
+    try:
+        mark_pipeline_running(session, uuid_mod.UUID(pipeline_run_id), stage=PipelineStage.generate_scripts)
+    finally:
+        session.close()
+
+    try:
+        session = get_session_factory()()
+        try:
+            count = persist_test_scripts_for_pipeline(session, pipeline_run_id=uuid_mod.UUID(pipeline_run_id))
+            mark_pipeline_completed(
+                session,
+                uuid_mod.UUID(pipeline_run_id),
+                stage=PipelineStage.generate_scripts,
+                extra_config={"script_count": count},
+            )
+            session.commit()
+        finally:
+            session.close()
+    except Exception as exc:
+        session = get_session_factory()()
+        try:
+            mark_pipeline_failed(session, uuid_mod.UUID(pipeline_run_id), error_message=str(exc))
+        finally:
+            session.close()
+        _publish_stage_failed(pipeline_run_id, stage, str(exc))
+        _publish_pipeline_completed(pipeline_run_id, status="failed")
+        raise
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    _publish_stage_completed(pipeline_run_id, stage, duration_ms)
+    _publish_pipeline_completed(pipeline_run_id)
+    return {
+        "ok": True,
+        "pipelineRunId": pipeline_run_id,
+        "agentId": "script-generation",
+        "output": {"script_count": count},
+    }
+
+
+def run_execute(payload: dict[str, Any]) -> dict[str, Any]:
+    from aqa_executor.runner import execute_pipeline
+
+    return execute_pipeline(payload)
 
 
 def run_analyze(payload: dict[str, Any]) -> dict[str, Any]:

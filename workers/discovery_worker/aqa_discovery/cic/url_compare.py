@@ -15,10 +15,9 @@ def is_at_baseline(page_url: str, baseline_url: str) -> bool:
 
 
 def is_url_discovery(pre_url: str, post_url: str, baseline_url: str) -> bool:
-    """True when an interaction revealed a new in-scope route worth enqueueing."""
+    """True when an interaction changed the URL — enqueue for BFS as a new page."""
+    del baseline_url  # any in-scope URL change counts, not only departures from baseline
     if post_url == pre_url:
-        return False
-    if is_at_baseline(post_url, baseline_url) and is_at_baseline(pre_url, baseline_url):
         return False
     return normalize_discovery_url(post_url) != normalize_discovery_url(pre_url)
 

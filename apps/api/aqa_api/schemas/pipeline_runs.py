@@ -35,3 +35,7 @@ class PipelineRunResponse(BaseModel):
     llm_tokens_used: int = 0
     cost_estimate: float = 0.0
     error_message: str | None = None
+
+
+class ActivePipelineResponse(BaseModel):
+    pipeline_run: PipelineRunResponse | None = None

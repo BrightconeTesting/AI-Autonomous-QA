@@ -2,6 +2,7 @@
 -e packages/agents
 -e workers/celery_app
 -e workers/discovery_worker
+-e workers/playwright-executor
 -e apps/api
 alembic>=1.14,<2
 psycopg2-binary>=2.9,<3

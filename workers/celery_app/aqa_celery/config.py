@@ -1,9 +1,10 @@
 import os
 from pathlib import Path
 
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
-from aqa_celery.task_names import TASK_ROUTES
+from aqa_celery.task_names import TASK_CLEANUP_ARTIFACTS, TASK_ROUTES
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
@@ -30,4 +31,12 @@ task_annotations = {
         "retry_backoff_max": 600,
         "retry_jitter": True,
     }
+}
+
+# Nightly artifact retention (ARTIFACT_RETENTION_DAYS, 0 = disabled)
+beat_schedule = {
+    "cleanup-artifacts-nightly": {
+        "task": TASK_CLEANUP_ARTIFACTS,
+        "schedule": crontab(hour=2, minute=0),
+    },
 }

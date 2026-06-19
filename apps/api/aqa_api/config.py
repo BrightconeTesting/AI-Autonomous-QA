@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     log_level: str = "info"
     api_version: str = "0.1.0"
     encryption_key: str | None = None
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -36,6 +37,10 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.node_env == "development"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 
 
 settings = Settings()

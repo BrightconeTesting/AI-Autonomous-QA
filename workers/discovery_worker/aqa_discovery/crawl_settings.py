@@ -23,6 +23,27 @@ _CIC_FAST_DEFAULTS: dict[str, object] = {
     "cic_in_page_only": True,
     "cic_dom_stable_rounds": 4,
     "cic_screenshot_all_states": False,
+    "cic_unlimited_interactions": False,
+}
+
+# Deep exploration — interact with all safe elements; URL changes enqueue new BFS pages.
+_CIC_FULL_DEFAULTS: dict[str, object] = {
+    "cic_mode": "full",
+    "cic_unlimited_interactions": True,
+    "cic_in_page_only": False,
+    "cic_rich_interactions": True,
+    "cic_enable_tables": True,
+    "cic_enable_date_pickers": True,
+    "cic_enable_iframes": True,
+    "cic_screenshot_all_states": False,
+    "safe_form_fill": True,
+    "max_states_per_url": 100,
+    "max_states_total": 2000,
+    "max_interaction_depth": 10,
+    "max_interactions_per_url": 200,
+    "max_interactions_per_state": 50,
+    "cic_max_options_per_select": 20,
+    "cic_max_graph_paths_per_page": 20,
 }
 
 
@@ -38,6 +59,7 @@ class CrawlSettings(BaseModel):
     wait_for_selector: str | None = None
     enable_cic: bool = False
     cic_mode: CicMode = "fast"
+    cic_unlimited_interactions: bool = False
     max_states_per_url: int = Field(default=20, ge=1, le=100)
     max_states_total: int = Field(default=200, ge=1, le=2000)
     max_interactions_per_url: int = Field(default=50, ge=1, le=200)
@@ -83,6 +105,10 @@ class CrawlSettings(BaseModel):
             for key, value in _CIC_FAST_DEFAULTS.items():
                 if key not in explicit_keys:
                     config[key] = value
+        elif enable_cic and cic_mode == "full":
+            for key, value in _CIC_FULL_DEFAULTS.items():
+                if key not in explicit_keys:
+                    config[key] = value
 
         hostname = urlparse(base_url).hostname
         allowed = config.get("allowed_domains")
@@ -113,6 +139,7 @@ class CrawlSettings(BaseModel):
             wait_for_selector=config.get("wait_for_selector"),
             enable_cic=enable_cic,
             cic_mode=cic_mode_val,
+            cic_unlimited_interactions=bool(config.get("cic_unlimited_interactions", False)),
             max_states_per_url=int(config.get("max_states_per_url", 20)),
             max_states_total=int(config.get("max_states_total", 200)),
             max_interactions_per_url=int(config.get("max_interactions_per_url", 50)),

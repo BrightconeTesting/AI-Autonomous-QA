@@ -18,6 +18,28 @@ def _hostname(url: str) -> str:
     return parsed.hostname.lower()
 
 
+class CredentialsInput(BaseModel):
+    email: str | None = None
+    username: str | None = None
+    password: str | None = None
+
+    @model_validator(mode="after")
+    def validate_pair(self) -> CredentialsInput:
+        identity = (self.email or self.username or "").strip()
+        password = (self.password or "").strip()
+        if identity and not password:
+            raise ValueError("password is required when email or username is provided")
+        if password and not identity:
+            raise ValueError("email or username is required when password is provided")
+        return self
+
+    def is_empty(self) -> bool:
+        return not (self.email or self.username or self.password)
+
+    def resolved_email(self) -> str:
+        return str(self.email or self.username).strip()
+
+
 class AuthConfigInput(BaseModel):
     type: str = "form"
     login_url: str | None = None
@@ -25,6 +47,7 @@ class AuthConfigInput(BaseModel):
     password_selector: str | None = None
     submit_selector: str | None = None
     credentials_secret_ref: str | None = None
+    credentials: CredentialsInput | None = None
     cookies: list[dict[str, Any]] | None = None
 
 
@@ -40,6 +63,7 @@ class CrawlConfigInput(BaseModel):
     page_timeout_ms: int | None = Field(default=30000, ge=1000, le=120000)
     enable_cic: bool = False
     cic_mode: str = Field(default="fast")
+    cic_unlimited_interactions: bool = False
     max_states_per_url: int = Field(default=20, ge=1, le=100)
     max_states_total: int = Field(default=200, ge=1, le=2000)
     max_interactions_per_url: int = Field(default=50, ge=1, le=200)

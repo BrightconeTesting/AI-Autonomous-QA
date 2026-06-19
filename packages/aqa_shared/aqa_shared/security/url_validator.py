@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from urllib.parse import urlparse
+
+DNS_RESOLVE_TIMEOUT_SEC = 5
 
 
 class UrlSecurityError(ValueError):
@@ -41,15 +44,24 @@ def _check_ip_literal(hostname: str) -> None:
 
 
 def _resolve_and_check(hostname: str, port: int | None) -> None:
-    try:
-        infos = socket.getaddrinfo(
+    def _lookup() -> list[tuple]:
+        return socket.getaddrinfo(
             hostname,
             port or 443,
             type=socket.SOCK_STREAM,
             proto=socket.IPPROTO_TCP,
         )
-    except socket.gaierror as exc:
-        raise UrlSecurityError(f"could not resolve hostname {hostname!r}") from exc
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_lookup)
+        try:
+            infos = future.result(timeout=DNS_RESOLVE_TIMEOUT_SEC)
+        except FuturesTimeoutError as exc:
+            raise UrlSecurityError(
+                f"could not resolve hostname {hostname!r} (timed out after {DNS_RESOLVE_TIMEOUT_SEC}s)"
+            ) from exc
+        except socket.gaierror as exc:
+            raise UrlSecurityError(f"could not resolve hostname {hostname!r}") from exc
 
     for info in infos:
         ip_str = info[4][0]

@@ -57,7 +57,7 @@ class CrawlSettings(BaseModel):
     max_scroll_iterations: int = Field(default=10, ge=0, le=50)
     wait_until: WaitUntil = "domcontentloaded"
     wait_for_selector: str | None = None
-    enable_cic: bool = False
+    enable_cic: bool = True
     cic_mode: CicMode = "fast"
     cic_unlimited_interactions: bool = False
     max_states_per_url: int = Field(default=20, ge=1, le=100)
@@ -77,6 +77,10 @@ class CrawlSettings(BaseModel):
     cic_enable_tables: bool = True
     cic_enable_date_pickers: bool = True
     cic_max_graph_paths_per_page: int = Field(default=5, ge=1, le=20)
+    capture_network: bool = True
+    capture_har: bool = False
+    openapi_url: str | None = None
+    excluded_analytics_domains: list[str] = Field(default_factory=list)
     blocked_interaction_patterns: list[str] = Field(default_factory=list)
     headless: bool = True
     browser_channel: str | None = None
@@ -99,7 +103,7 @@ class CrawlSettings(BaseModel):
 
         config = {**base, **over}
 
-        enable_cic = bool(config.get("enable_cic", False))
+        enable_cic = bool(config.get("enable_cic", True))
         cic_mode = config.get("cic_mode", "fast")
         if enable_cic and cic_mode == "fast":
             for key, value in _CIC_FAST_DEFAULTS.items():
@@ -157,6 +161,10 @@ class CrawlSettings(BaseModel):
             cic_enable_tables=bool(config.get("cic_enable_tables", True)),
             cic_enable_date_pickers=bool(config.get("cic_enable_date_pickers", True)),
             cic_max_graph_paths_per_page=int(config.get("cic_max_graph_paths_per_page", 5)),
+            capture_network=bool(config.get("capture_network", True)),
+            capture_har=bool(config.get("capture_har", False)),
+            openapi_url=config.get("openapi_url"),
+            excluded_analytics_domains=list(config.get("excluded_analytics_domains") or []),
             blocked_interaction_patterns=list(config.get("blocked_interaction_patterns") or []),
             headless=bool(config.get("headless", True)),
             browser_channel=config.get("browser_channel"),

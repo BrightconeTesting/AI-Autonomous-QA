@@ -1,0 +1,20 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Sample API", "version": "1.0.0" },
+  "paths": {
+    "/api/users": {
+      "get": {
+        "responses": { "200": { "description": "ok" } }
+      },
+      "post": {
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": { "201": { "description": "created" } }
+      }
+    },
+    "/api/users/{id}": {
+      "delete": {
+        "responses": { "204": { "description": "deleted" } }
+      }
+    }
+  }
+}

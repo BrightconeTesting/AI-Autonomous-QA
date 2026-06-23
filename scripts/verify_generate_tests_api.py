@@ -138,7 +138,7 @@ def main() -> int:
         _seed_v2_appmap(session, app_id)
         accepted = client.post(
             f"/api/v1/apps/{app_id}/generate-tests",
-            json={"force": True, "requireAppmapV2": False},
+            json={"force": True, "requireAppmapV2": False, "requireAppmapApproval": False},
         )
         if accepted.status_code != 202:
             print(f"FAIL generate-tests: expected 202 got {accepted.status_code} {accepted.text}", file=sys.stderr)

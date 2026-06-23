@@ -121,6 +121,18 @@ def main() -> int:
         return 1
     print("OK invalid seed_urls rejected")
 
+    deleted = client.delete(f"/api/v1/apps/{app_id}")
+    if deleted.status_code != 204:
+        print(f"FAIL DELETE /apps/{{id}}: {deleted.status_code} {deleted.text}", file=sys.stderr)
+        return 1
+    print("OK DELETE /apps/{id}")
+
+    gone = client.get(f"/api/v1/apps/{app_id}")
+    if gone.status_code != 404:
+        print(f"FAIL GET after delete: expected 404 got {gone.status_code}", file=sys.stderr)
+        return 1
+    print("OK GET /apps/{id} 404 after delete")
+
     print("verify:apps OK")
     return 0
 

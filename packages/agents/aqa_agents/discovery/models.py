@@ -10,6 +10,7 @@ class DiscoveryInput(BaseModel):
     seed_urls: list[str] = Field(default_factory=list)
     auth_config: dict[str, Any] = Field(default_factory=dict)
     crawl_config: dict[str, Any] = Field(default_factory=dict)
+    use_llm: bool = True
 
 
 class DiscoveryOutput(BaseModel):

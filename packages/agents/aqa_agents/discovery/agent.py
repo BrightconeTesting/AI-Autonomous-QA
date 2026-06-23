@@ -1,4 +1,4 @@
-"""DiscoveryAgent implementation — rule-based flows + AppMap (Day 20)."""
+"""DiscoveryAgent implementation — rule-based flows + optional LLM structuring."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import uuid
 
 from aqa_shared.types.agent import AgentContext, AgentResult
 
-from aqa_agents.base import log_agent_run, stub_result
+from aqa_agents.base import log_agent_run
 from aqa_agents.discovery.appmap import build_and_persist_appmap
 from aqa_agents.discovery.models import DiscoveryInput, DiscoveryOutput
 
@@ -25,6 +25,8 @@ class DiscoveryAgent:
             result = build_and_persist_appmap(
                 application_id=app_id,
                 pipeline_run_id=pipeline_run_id,
+                use_llm=input.use_llm,
+                token_budget_remaining=ctx.token_budget_remaining,
             )
         except (ValueError, RuntimeError) as exc:
             logger.warning(
@@ -35,7 +37,12 @@ class DiscoveryAgent:
                     "error": str(exc),
                 },
             )
-            return stub_result(DiscoveryOutput())
+            return AgentResult(
+                output=DiscoveryOutput(),
+                tokensUsed=0,
+                costEstimate=0.0,
+                validationPassed=True,
+            )
 
         output = DiscoveryOutput(
             pages=result.pages,
@@ -46,6 +53,23 @@ class DiscoveryAgent:
                 "flow_count": result.flow_count,
                 "appmap_hash": result.appmap_hash,
                 "appmap_path": result.appmap_path,
+                "llm_skip_reason": result.llm_skip_reason,
             },
         )
-        return stub_result(output)
+        logger.info(
+            "DiscoveryAgent completed",
+            extra={
+                "applicationId": ctx.application_id,
+                "pipelineRunId": ctx.pipeline_run_id,
+                "flowCount": result.flow_count,
+                "tokensUsed": result.tokens_used,
+                "costEstimate": result.cost_estimate,
+                "llmSkipReason": result.llm_skip_reason,
+            },
+        )
+        return AgentResult(
+            output=output,
+            tokensUsed=result.tokens_used,
+            costEstimate=result.cost_estimate,
+            validationPassed=True,
+        )

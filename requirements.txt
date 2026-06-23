@@ -6,3 +6,4 @@
 -e apps/api
 alembic>=1.14,<2
 psycopg2-binary>=2.9,<3
+openai>=1.40,<2

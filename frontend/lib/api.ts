@@ -79,9 +79,15 @@ export const apiClient = {
     api<{ pipeline_run: PipelineRun | null }>(`/apps/${appId}/active-pipeline`),
   createApp: (body: unknown) =>
     api<Application>("/apps", { method: "POST", body: JSON.stringify(body) }),
+  deleteApp: (id: string) => api<void>(`/apps/${id}`, { method: "DELETE" }),
   discover: (
     id: string,
-    opts?: { force?: boolean; crawlConfig?: Record<string, unknown> }
+    opts?: {
+      force?: boolean;
+      crawlConfig?: Record<string, unknown>;
+      discoverConfig?: Record<string, unknown>;
+      useLlm?: boolean;
+    }
   ) =>
     api<{ pipeline_run_id: string; status: string; current_stage: string }>(
       `/apps/${id}/discover`,
@@ -89,11 +95,16 @@ export const apiClient = {
         method: "POST",
         body: JSON.stringify({
           force: opts?.force ?? false,
+          use_llm: opts?.useLlm ?? opts?.discoverConfig?.use_llm ?? true,
           ...(opts?.crawlConfig ? { crawlConfigOverrides: opts.crawlConfig } : {}),
+          ...(opts?.discoverConfig ?? {}),
         }),
       }
     ),
-  generateTests: (id: string, opts?: { max_tests?: number }) =>
+  generateTests: (
+    id: string,
+    opts?: { max_tests?: number; requireAppmapApproval?: boolean }
+  ) =>
     api<{ pipeline_run_id: string; status: string; current_stage: string }>(
       `/apps/${id}/generate-tests`,
       {
@@ -101,6 +112,7 @@ export const apiClient = {
         body: JSON.stringify({
           force: true,
           requireAppmapV2: false,
+          requireAppmapApproval: opts?.requireAppmapApproval ?? true,
           max_tests: opts?.max_tests ?? 200,
           priorities: ["critical", "high", "medium"],
         }),
@@ -154,6 +166,20 @@ export const apiClient = {
   queueStats: () => api<{ queues: Record<string, number> }>("/queues/stats").catch(() => null),
   getDashboardSummary: () => api<import("./types").DashboardSummary>("/dashboard/summary"),
   getAppMap: (appId: string) => api<import("./types").AppMapResponse>(`/apps/${appId}/appmap`),
+  getDiscoverySummary: (appId: string) =>
+    api<import("./types").DiscoverySummaryResponse>(`/apps/${appId}/discovery-summary`),
+  getAppMapApproval: (appId: string) =>
+    api<import("./types").AppMapApprovalResponse>(`/apps/${appId}/appmap/approval`),
+  approveAppMap: (appId: string) =>
+    api<import("./types").AppMapApprovalResponse>(`/apps/${appId}/appmap/approve`, {
+      method: "POST",
+      body: "{}",
+    }),
+  rejectAppMap: (appId: string, reason: string) =>
+    api<import("./types").AppMapApprovalResponse>(`/apps/${appId}/appmap/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
   pageScreenshotUrl: (appId: string, pageId: string) =>
     `${API_BASE}/apps/${appId}/pages/${pageId}/screenshot`,
 };

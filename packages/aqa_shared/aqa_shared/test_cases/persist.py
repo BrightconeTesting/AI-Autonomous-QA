@@ -61,6 +61,14 @@ def persist_test_scripts_for_pipeline(db: Session, *, pipeline_run_id: uuid.UUID
     )
     count = 0
     for case in cases:
+        existing = db.scalar(
+            select(TestScript)
+            .where(TestScript.testcase_id == case.testcase_id)
+            .order_by(TestScript.version.desc())
+            .limit(1)
+        )
+        if existing is not None:
+            continue
         steps_data = case.steps if isinstance(case.steps, dict) else {}
         machine_steps = steps_data.get("steps") or []
         manifest = {

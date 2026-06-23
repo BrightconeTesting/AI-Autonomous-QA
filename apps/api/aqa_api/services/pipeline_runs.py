@@ -143,9 +143,17 @@ def start_discovery(
         else:
             raise ActivePipelineConflictError(active.id)
 
-    config: dict = {"force": body.force}
+    config: dict = {"force": body.force, "use_llm": body.use_llm}
     if body.crawl_config_overrides:
         config["crawl_config_overrides"] = body.crawl_config_overrides
+    if body.llm_budgets is not None:
+        config["llm_budgets"] = body.llm_budgets.to_dict()
+    if body.personas:
+        config["personas"] = [persona.model_dump(by_alias=True) for persona in body.personas]
+    if body.openapi_url:
+        config["openapi_url"] = body.openapi_url
+    config["capture_network"] = body.capture_network
+    config["capture_har"] = body.capture_har
 
     run = PipelineRun(
         application_id=application_id,
@@ -158,12 +166,25 @@ def start_discovery(
     db.commit()
     db.refresh(run)
 
+    discover_config: dict = {
+        "use_llm": body.use_llm,
+        "capture_network": body.capture_network,
+        "capture_har": body.capture_har,
+    }
+    if body.llm_budgets is not None:
+        discover_config["llm_budgets"] = body.llm_budgets.to_dict()
+    if body.personas:
+        discover_config["personas"] = [persona.model_dump(by_alias=True) for persona in body.personas]
+    if body.openapi_url:
+        discover_config["openapi_url"] = body.openapi_url
+
     payload = CeleryTaskPayload(
         pipelineRunId=str(run.id),
         applicationId=str(application_id),
         pluginId="ui",
         mode="ui",
         crawlConfigOverrides=body.crawl_config_overrides,
+        discoverConfig=discover_config,
     )
     enqueue_discovery_task(payload)
     publish_pipeline_event(

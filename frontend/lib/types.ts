@@ -155,6 +155,28 @@ export type AppMapFlow = {
   description: string | null;
   source: string;
   steps: Array<Record<string, unknown>>;
+  confidence?: number;
+  confidence_factors?: string[];
+  risk_score?: number;
+  testability_score?: number;
+  automation_complexity_score?: number;
+};
+
+export type LlmBudgetUsage = {
+  stages?: Record<string, { tokens_used?: number; budget?: number }>;
+  total_tokens_used?: number;
+  total_cap?: number;
+  truncated?: boolean;
+};
+
+export type AppMapApprovalStatus = "none" | "pending" | "approved" | "rejected";
+
+export type AppMapApprovalResponse = {
+  application_id: string;
+  pipeline_run_id: string | null;
+  status: AppMapApprovalStatus;
+  approved_at: string | null;
+  rejection_reason: string | null;
 };
 
 export type AppMapState = {
@@ -171,10 +193,60 @@ export type AppMapTransition = {
   action: Record<string, unknown>;
 };
 
+export type AppMapModuleFeature = {
+  name: string;
+  flow_id: string | null;
+  page_ids: string[];
+};
+
+export type AppMapModule = {
+  module_id: string;
+  name: string;
+  parent_module_id: string | null;
+  pages: string[];
+  flow_ids: string[];
+  features: AppMapModuleFeature[];
+  confidence?: number;
+  confidence_factors?: string[];
+  review_required?: boolean;
+  risk_score?: number;
+  risk_factors?: string[];
+  testability_score?: number;
+  automation_complexity_score?: number;
+  complexity_factors?: string[];
+  business_criticality?: string;
+};
+
+export type TopRiskModule = {
+  module_id: string;
+  name?: string;
+  risk_score: number;
+  top_factor?: string;
+};
+
+export type ScoringSummary = {
+  app_risk_score: number;
+  app_testability_score: number;
+  app_automation_complexity_score: number;
+  discovery_completeness_score: number;
+  high_risk_modules: string[];
+  top_risk_modules: TopRiskModule[];
+  recommendations: string[];
+};
+
+export type NavigationGraphEdge = {
+  from_page_id: string | null;
+  to_page_id: string | null;
+  to_url?: string | null;
+  via?: string | null;
+  label?: string | null;
+};
+
 export type AppMapResponse = {
   schema_version: number;
   application_id: string;
   last_crawl_at: string | null;
+  mvp?: boolean;
   pages: AppMapPage[];
   flows: AppMapFlow[];
   stats: {
@@ -183,9 +255,62 @@ export type AppMapResponse = {
     flow_count: number;
     state_count: number;
     interaction_count: number;
+    module_count?: number;
   };
   states: AppMapState[];
   transitions: AppMapTransition[];
+  modules?: AppMapModule[];
+  navigation_graph?: NavigationGraphEdge[];
+  discovery_completeness_score?: number | null;
+  recommendations?: string[];
+  scoring_summary?: ScoringSummary | null;
+  llm_budget_usage?: LlmBudgetUsage;
+};
+
+export type DiscoverySummaryCounts = {
+  pages: number;
+  buttons: number;
+  forms: number;
+  links: number;
+  api_endpoints: number;
+  flows: number;
+  entities: number;
+  modules: number;
+  spa_routes: number;
+  api_dependency_edges: number;
+};
+
+export type DiscoverySummaryRiskArea = {
+  module: string;
+  risk_score: number;
+  top_factor: string;
+};
+
+export type DiscoverySummaryModuleNode = {
+  name: string;
+  children: string[];
+};
+
+export type DiscoverySummaryAuth = {
+  session_type: string;
+  personas_authenticated: string[];
+};
+
+export type DiscoverySummaryResponse = {
+  application_id: string;
+  last_crawl_at: string | null;
+  schema_version: number;
+  counts: DiscoverySummaryCounts;
+  scoring_summary?: ScoringSummary | null;
+  discovery_completeness_score: number;
+  recommendations: string[];
+  what_pages_exist: string[];
+  what_forms_exist: Array<{ name: string; page: string }>;
+  what_apis_are_called: Array<{ method: string; path: string }>;
+  what_should_be_tested_first: string[];
+  top_risk_areas: DiscoverySummaryRiskArea[];
+  module_tree: DiscoverySummaryModuleNode[];
+  auth_summary: DiscoverySummaryAuth;
 };
 
 export type DashboardSummary = {

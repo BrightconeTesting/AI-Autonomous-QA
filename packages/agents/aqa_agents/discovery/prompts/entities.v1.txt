@@ -1,0 +1,22 @@
+You are structuring data entities for an AppMap v3 artifact.
+
+Input rule entities (ground truth ids and fields — do not invent new entity_id values):
+{{rule_entities_json}}
+
+Output strict JSON:
+{
+  "data_entities": [
+    {
+      "entity_id": "user",
+      "name": "User",
+      "fields": ["email", "role"]
+    }
+  ]
+}
+
+Rules:
+- Every entity_id MUST match an entity_id from the input rule entities.
+- You may improve display "name" for clarity.
+- "fields" may only contain names already present on the matching rule entity (synonyms allowed only when clearly the same field).
+- Do not add entities, pages, forms, or APIs.
+- Do not change crud_surfaces or module_id.

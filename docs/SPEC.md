@@ -2222,7 +2222,7 @@ Reference: [WEEK-05-06-SCAFFOLD-GUIDE.md](./WEEK-05-06-SCAFFOLD-GUIDE.md)
 |-----|--------|--------|
 | Day 21 | `POST .../generate-tests` + pipeline orchestration | **Not started** |
 | Day 22 | TestDesignAgent rule-based templates | **Not started** |
-| Day 23 | TestDesignAgent LLM gap-fill + TestCaseSchema validation | **Not started** |
+| Day 23 | TestDesignAgent LLM gap-fill + TestCaseSchema validation | **Complete** |
 | Day 24 | Persist `test_cases` + `GET .../test-cases` | **Not started** |
 | Day 25 | ScriptGenerationAgent plan step + Celery design wire | **Not started** |
 | Day 26 | Playwright TypeScript emit | **Not started** |

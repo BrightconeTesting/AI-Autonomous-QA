@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections import deque
 from collections.abc import Callable
 
 from aqa_discovery.crawl_settings import CrawlSettings
-from aqa_discovery.extractors import extract_elements, save_page_screenshot
+from aqa_discovery.page_capture import capture_interactive_data
+from aqa_discovery.extractors import save_page_screenshot
 from aqa_discovery.persist import screenshot_path_for_page
 from aqa_discovery.robots import RobotsChecker
 from aqa_discovery.safety import is_safety_excluded_link, is_safety_excluded_url
 from aqa_discovery.spa_views import expand_spa_views, is_virtual_view_url
+from aqa_discovery.spa_routes import collect_spa_route_events, install_spa_route_listener
 from aqa_discovery.types import CrawlHaltError, CrawlResult, CrawlStats, PageSnapshot
 from aqa_discovery.url_utils import (
     is_allowed_domain,
@@ -234,13 +237,31 @@ class CrawlSession:
         return links
 
     def _visit_page(
-        self, url: str, *, depth: int, settings: CrawlSettings, stats: CrawlStats | None = None
+        self,
+        url: str,
+        *,
+        depth: int,
+        settings: CrawlSettings,
+        stats: CrawlStats | None = None,
+        on_cic_progress: Callable[[str, CrawlStats, dict], None] | None = None,
     ) -> tuple[PageSnapshot, list[str]]:
         if self._context is None:
             raise RuntimeError("CrawlSession is not active — use as a context manager")
 
         page = self._context.new_page()
         crawl_stats = stats or CrawlStats()
+        page_session_start = time.monotonic()
+        install_spa_route_listener(page)
+        network_capture = None
+        if settings.capture_network:
+            from aqa_discovery.network_capture import NetworkCapture
+
+            network_capture = NetworkCapture(
+                page_url=url,
+                allowed_domains=settings.allowed_domains,
+                excluded_analytics_domains=settings.excluded_analytics_domains,
+            )
+            network_capture.attach(page)
         try:
             response = page.goto(
                 url,
@@ -258,6 +279,8 @@ class CrawlSession:
 
             status = response.status if response is not None else 0
             baseline_url = page.url
+            if on_cic_progress is not None:
+                on_cic_progress(baseline_url, crawl_stats, {"phase": "page_loaded"})
 
             if settings.enable_cic:
                 from aqa_discovery.cic.session import run_cic_session
@@ -272,9 +295,19 @@ class CrawlSession:
                     capture_artifacts=self.capture_artifacts,
                     extract_links_fn=lambda p, u: self._extract_links(p, u),
                     detect_blockers=self._detect_captcha_or_mfa,
+                    on_progress=on_cic_progress,
+                    session_start=page_session_start,
                 )
                 baseline_state = cic_result.states[0] if cic_result.states else None
-                elements = baseline_state.elements if baseline_state else extract_elements(page)
+                if baseline_state:
+                    elements = baseline_state.elements
+                    forms = baseline_state.forms
+                else:
+                    elements, forms = capture_interactive_data(
+                        page,
+                        page_url=baseline_url,
+                        allowed_domains=settings.allowed_domains,
+                    )
                 screenshot_path: str | None = None
                 if self.capture_artifacts and self.app_id is not None:
                     dest = screenshot_path_for_page(app_id=self.app_id, url=baseline_url)
@@ -285,6 +318,8 @@ class CrawlSession:
                         screenshot_path = str(dest)
 
                 html_len = baseline_state.html_length if baseline_state else len(page.content())
+                page_api_endpoints = network_capture.collect() if network_capture else []
+                spa_events = collect_spa_route_events(page, source_page_url=baseline_url)
                 snapshot = PageSnapshot(
                     url=baseline_url,
                     title=page.title(),
@@ -292,10 +327,16 @@ class CrawlSession:
                     html_length=html_len,
                     depth=depth,
                     elements=elements,
+                    forms=forms,
+                    api_endpoints=page_api_endpoints,
                     screenshot_path=screenshot_path,
                     states=cic_result.states,
                     transitions=cic_result.transitions,
                     discovered_urls=cic_result.discovered_urls,
+                    har_entries=network_capture.har_entries() if network_capture and settings.capture_har else [],
+                    interaction_events=cic_result.interaction_events,
+                    network_events=network_capture.network_events() if network_capture else [],
+                    spa_route_events=spa_events,
                 )
                 links = list(cic_result.all_links)
                 if not links:
@@ -315,7 +356,11 @@ class CrawlSession:
                 return snapshot, links
 
             html = page.content()
-            elements = extract_elements(page)
+            elements, forms = capture_interactive_data(
+                page,
+                page_url=page.url,
+                allowed_domains=settings.allowed_domains,
+            )
             screenshot_path = None
             if self.capture_artifacts and self.app_id is not None:
                 dest = screenshot_path_for_page(app_id=self.app_id, url=page.url)
@@ -329,7 +374,11 @@ class CrawlSession:
                 html_length=len(html),
                 depth=depth,
                 elements=elements,
+                forms=forms,
+                api_endpoints=network_capture.collect() if network_capture else [],
                 screenshot_path=screenshot_path,
+                har_entries=network_capture.har_entries() if network_capture and settings.capture_har else [],
+                spa_route_events=collect_spa_route_events(page, source_page_url=page.url),
             )
             links = self._extract_links(page, snapshot.url)
             logger.info(
@@ -347,6 +396,8 @@ class CrawlSession:
             )
             return snapshot, links
         finally:
+            if network_capture is not None:
+                network_capture.detach(page)
             page.close()
 
     def fetch_page(
@@ -397,6 +448,7 @@ class CrawlSession:
         settings: CrawlSettings,
         *,
         on_progress: Callable[[PageSnapshot, CrawlStats], None] | None = None,
+        on_cic_progress: Callable[[str, CrawlStats, dict], None] | None = None,
     ) -> CrawlResult:
         """Breadth-first crawl with scope limits (SPEC §15.1–15.6, Day 16–17)."""
         allowed = set(settings.allowed_domains)
@@ -429,16 +481,25 @@ class CrawlSession:
             if is_virtual_view_url(url):
                 continue
             try:
-                snapshot, links = self._visit_page(url, depth=depth, settings=settings, stats=stats)
+                snapshot, links = self._visit_page(
+                    url,
+                    depth=depth,
+                    settings=settings,
+                    stats=stats,
+                    on_cic_progress=on_cic_progress,
+                )
             except CrawlHaltError as exc:
                 stats.pages_crawled = len(pages)
                 logger.warning(
                     "DiscoveryWorker crawl halted",
                     extra={"url": exc.url or url, "reason": exc.reason, "message": exc.message},
                 )
-                return CrawlResult(
-                    pages=pages,
-                    stats=stats,
+                return self._build_crawl_result(
+                    pages,
+                    stats,
+                    settings,
+                    base_url=start_urls[0] if start_urls else "",
+                    allowed=allowed,
                     halted=True,
                     halt_reason=exc.message,
                     halt_url=exc.url or url,
@@ -495,9 +556,60 @@ class CrawlSession:
                 "skippedInteractionSafety": stats.skipped_interaction_safety,
                 "skippedRobots": stats.skipped_robots,
                 "skippedDuplicate": stats.skipped_duplicate,
+                "apiEndpoints": len(self._merge_crawl_api_endpoints(pages, settings, start_urls[0] if start_urls else "", allowed)),
             },
         )
-        return CrawlResult(pages=pages, stats=stats)
+        return self._build_crawl_result(pages, stats, settings, base_url=start_urls[0] if start_urls else "", allowed=allowed)
+
+    def _merge_crawl_api_endpoints(
+        self,
+        pages: list[PageSnapshot],
+        settings: CrawlSettings,
+        base_url: str,
+        allowed: set[str],
+    ) -> list:
+        from aqa_discovery.network_capture import merge_api_endpoints
+
+        page_endpoints = [endpoint for page in pages for endpoint in page.api_endpoints]
+        openapi_endpoints = []
+        if settings.openapi_url:
+            try:
+                from aqa_discovery.openapi_import import fetch_openapi_endpoints
+
+                openapi_endpoints = fetch_openapi_endpoints(
+                    settings.openapi_url,
+                    base_url=base_url,
+                    allowed_domains=list(allowed),
+                )
+            except Exception as exc:
+                logger.warning("DiscoveryWorker OpenAPI import skipped: %s", exc)
+        return merge_api_endpoints(page_endpoints, openapi_endpoints)
+
+    def _build_crawl_result(
+        self,
+        pages: list[PageSnapshot],
+        stats: CrawlStats,
+        settings: CrawlSettings,
+        *,
+        base_url: str,
+        allowed: set[str],
+        halted: bool = False,
+        halt_reason: str | None = None,
+        halt_url: str | None = None,
+    ) -> CrawlResult:
+        har_entries = [entry for page in pages for entry in page.har_entries]
+        from aqa_discovery.spa_routes import aggregate_spa_route_events
+
+        return CrawlResult(
+            pages=pages,
+            api_endpoints=self._merge_crawl_api_endpoints(pages, settings, base_url, allowed),
+            har_entries=har_entries if settings.capture_har else [],
+            stats=stats,
+            halted=halted,
+            halt_reason=halt_reason,
+            halt_url=halt_url,
+            spa_route_events=aggregate_spa_route_events(pages),
+        )
 
 
 def fetch_page(url: str, *, page_timeout_ms: int = DEFAULT_PAGE_TIMEOUT_MS, headless: bool = True) -> PageSnapshot:

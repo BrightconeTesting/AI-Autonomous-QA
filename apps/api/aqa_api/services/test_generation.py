@@ -11,12 +11,19 @@ from aqa_agents.discovery.appmap import load_appmap_for_application
 from aqa_api.schemas.generate_tests import GenerateTestsRequest, GenerateTestsResponse
 from aqa_api.services.celery_enqueue import enqueue_generate_tests_tasks
 from aqa_api.services.pipeline_runs import ActivePipelineConflictError, find_active_pipeline_run
+from aqa_api.services.appmap_approval import AppMapApprovalError, validate_appmap_approved
 from aqa_shared.celery.types import CeleryTaskPayload
 from aqa_shared.db.models import Application, PipelineRun, PipelineStage, PipelineStatus
 from aqa_shared.sse import PipelineEventType, publish_pipeline_event
 
 
 class AppMapPreconditionError(Exception):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+class AppMapApprovalRequiredError(Exception):
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(detail)
@@ -91,12 +98,19 @@ def start_generate_tests(
         require_appmap_v2=body.require_appmap_v2,
     )
 
+    if body.require_appmap_approval:
+        try:
+            validate_appmap_approved(db, application_id)
+        except AppMapApprovalError as exc:
+            raise AppMapApprovalRequiredError(exc.detail) from exc
+
     config: dict = {
         "priorities": body.priorities,
         "max_tests": body.max_tests,
         "use_llm": body.use_llm,
         "generate_scripts": body.generate_scripts,
         "require_appmap_v2": body.require_appmap_v2,
+        "require_appmap_approval": body.require_appmap_approval,
         "force": body.force,
     }
 

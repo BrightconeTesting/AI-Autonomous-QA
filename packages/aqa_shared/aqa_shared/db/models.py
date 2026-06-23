@@ -120,13 +120,22 @@ class Application(Base):
         onupdate=datetime.utcnow,
     )
 
-    pages: Mapped[list[Page]] = relationship(back_populates="application")
-    flows: Mapped[list[Flow]] = relationship(back_populates="application")
-    test_cases: Mapped[list[TestCase]] = relationship(back_populates="application")
-    test_runs: Mapped[list[TestRun]] = relationship(back_populates="application")
-    pipeline_runs: Mapped[list[PipelineRun]] = relationship(back_populates="application")
+    pages: Mapped[list[Page]] = relationship(back_populates="application", passive_deletes=True)
+    forms: Mapped[list["Form"]] = relationship(back_populates="application", passive_deletes=True)
+    api_endpoints: Mapped[list["ApiEndpoint"]] = relationship(
+        back_populates="application", passive_deletes=True
+    )
+    api_ui_mappings: Mapped[list["ApiUiMapping"]] = relationship(
+        back_populates="application", passive_deletes=True
+    )
+    flows: Mapped[list[Flow]] = relationship(back_populates="application", passive_deletes=True)
+    test_cases: Mapped[list[TestCase]] = relationship(back_populates="application", passive_deletes=True)
+    test_runs: Mapped[list[TestRun]] = relationship(back_populates="application", passive_deletes=True)
+    pipeline_runs: Mapped[list[PipelineRun]] = relationship(
+        back_populates="application", passive_deletes=True
+    )
     credential_audits: Mapped[list[CredentialAccessAudit]] = relationship(
-        back_populates="application"
+        back_populates="application", passive_deletes=True
     )
 
     __table_args__ = (
@@ -155,6 +164,7 @@ class Page(Base):
     application: Mapped[Application] = relationship(back_populates="pages")
     elements: Mapped[list[Element]] = relationship(back_populates="page")
     states: Mapped[list[PageState]] = relationship(back_populates="page")
+    forms: Mapped[list["Form"]] = relationship(back_populates="page")
 
     __table_args__ = (
         UniqueConstraint("app_id", "url", name="idx_pages_app_url"),
@@ -185,6 +195,7 @@ class PageState(Base):
 
     page: Mapped[Page] = relationship(back_populates="states")
     elements: Mapped[list[Element]] = relationship(back_populates="state")
+    forms: Mapped[list["Form"]] = relationship(back_populates="state")
 
     __table_args__ = (
         UniqueConstraint("page_id", "state_key", name="page_states_page_id_state_key_key"),
@@ -242,6 +253,113 @@ class PageDiscovery(Base):
     __table_args__ = (
         UniqueConstraint("app_id", "url", name="page_discoveries_app_id_url_key"),
         Index("idx_page_discoveries_app_id", "app_id"),
+    )
+
+
+class ApiEndpoint(Base):
+    __tablename__ = "api_endpoints"
+
+    endpoint_id: Mapped[uuid.UUID] = mapped_column(
+        "endpoint_id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        "app_id", UUID(as_uuid=True), ForeignKey("applications.app_id", ondelete="CASCADE")
+    )
+    method: Mapped[str] = mapped_column("method", String(16))
+    path: Mapped[str] = mapped_column(Text)
+    path_pattern: Mapped[str] = mapped_column("path_pattern", Text)
+    source: Mapped[str] = mapped_column("source", String(16), server_default="network")
+    request_schema: Mapped[Any] = mapped_column(JSONB, server_default="{}")
+    response_schema: Mapped[Any] = mapped_column(JSONB, server_default="{}")
+    first_seen_page_id: Mapped[uuid.UUID | None] = mapped_column(
+        "first_seen_page_id", UUID(as_uuid=True), ForeignKey("pages.page_id", ondelete="SET NULL")
+    )
+    seen_page_ids: Mapped[Any] = mapped_column(JSONB, server_default="[]")
+    seen_count: Mapped[int] = mapped_column("seen_count", Integer, server_default="1")
+    discovered_at: Mapped[datetime] = mapped_column(
+        "discovered_at", DateTime(timezone=False), server_default=func.now()
+    )
+
+    application: Mapped[Application] = relationship(back_populates="api_endpoints")
+
+    __table_args__ = (
+        UniqueConstraint("app_id", "method", "path_pattern", name="api_endpoints_app_method_pattern_key"),
+        Index("idx_api_endpoints_app_id", "app_id"),
+    )
+
+
+class ApiUiMapping(Base):
+    __tablename__ = "api_ui_mappings"
+
+    mapping_id: Mapped[uuid.UUID] = mapped_column(
+        "mapping_id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        "app_id", UUID(as_uuid=True), ForeignKey("applications.app_id", ondelete="CASCADE")
+    )
+    api_endpoint_id: Mapped[uuid.UUID] = mapped_column(
+        "api_endpoint_id", UUID(as_uuid=True), ForeignKey("api_endpoints.endpoint_id", ondelete="CASCADE")
+    )
+    page_id: Mapped[uuid.UUID] = mapped_column(
+        "page_id", UUID(as_uuid=True), ForeignKey("pages.page_id", ondelete="CASCADE")
+    )
+    form_id: Mapped[uuid.UUID | None] = mapped_column(
+        "form_id", UUID(as_uuid=True), ForeignKey("forms.form_id", ondelete="SET NULL")
+    )
+    element_id: Mapped[uuid.UUID | None] = mapped_column(
+        "element_id", UUID(as_uuid=True), ForeignKey("elements.element_id", ondelete="SET NULL")
+    )
+    flow_id: Mapped[uuid.UUID | None] = mapped_column(
+        "flow_id", UUID(as_uuid=True), ForeignKey("flows.flow_id", ondelete="SET NULL")
+    )
+    trigger_action: Mapped[Any] = mapped_column(JSONB, server_default="{}")
+    confidence: Mapped[float] = mapped_column("confidence", Numeric(4, 3), server_default="0")
+    correlation_method: Mapped[str] = mapped_column("correlation_method", String(32), server_default="heuristic")
+    review_required: Mapped[bool] = mapped_column("review_required", Boolean, server_default="false")
+    discovered_at: Mapped[datetime] = mapped_column(
+        "discovered_at", DateTime(timezone=False), server_default=func.now()
+    )
+
+    application: Mapped[Application] = relationship(back_populates="api_ui_mappings")
+
+    __table_args__ = (
+        Index("idx_api_ui_mappings_app_id", "app_id"),
+        Index("idx_api_ui_mappings_endpoint_id", "api_endpoint_id"),
+        Index("idx_api_ui_mappings_page_id", "page_id"),
+    )
+
+
+class Form(Base):
+    __tablename__ = "forms"
+
+    form_id: Mapped[uuid.UUID] = mapped_column(
+        "form_id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        "app_id", UUID(as_uuid=True), ForeignKey("applications.app_id", ondelete="CASCADE")
+    )
+    page_id: Mapped[uuid.UUID] = mapped_column(
+        "page_id", UUID(as_uuid=True), ForeignKey("pages.page_id", ondelete="CASCADE")
+    )
+    state_id: Mapped[uuid.UUID | None] = mapped_column(
+        "state_id", UUID(as_uuid=True), ForeignKey("page_states.state_id", ondelete="CASCADE")
+    )
+    action: Mapped[str | None] = mapped_column(Text)
+    method: Mapped[str] = mapped_column("method", String(16), server_default="get")
+    attributes: Mapped[Any] = mapped_column(JSONB, server_default="{}")
+    field_element_ids: Mapped[Any] = mapped_column(JSONB, server_default="[]")
+    discovered_at: Mapped[datetime] = mapped_column(
+        "discovered_at", DateTime(timezone=False), server_default=func.now()
+    )
+
+    application: Mapped[Application] = relationship(back_populates="forms")
+    page: Mapped[Page] = relationship(back_populates="forms")
+    state: Mapped[PageState | None] = relationship(back_populates="forms")
+
+    __table_args__ = (
+        Index("idx_forms_app_id", "app_id"),
+        Index("idx_forms_page_id", "page_id"),
+        Index("idx_forms_state_id", "state_id"),
     )
 
 

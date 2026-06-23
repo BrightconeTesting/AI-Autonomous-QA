@@ -18,15 +18,17 @@ const icons: Record<PhaseState, string> = {
 
 type Props = {
   crawl: PhaseState;
+  review: PhaseState;
   generate: PhaseState;
   execute: PhaseState;
 };
 
-export function PipelinePhaseStepper({ crawl, generate, execute }: Props) {
+export function PipelinePhaseStepper({ crawl, review, generate, execute }: Props) {
   const phases = [
     { label: "1. Crawl", state: crawl },
-    { label: "2. Generate Tests", state: generate },
-    { label: "3. Execute", state: execute },
+    { label: "2. Review AppMap", state: review },
+    { label: "3. Generate Tests", state: generate },
+    { label: "4. Execute", state: execute },
   ];
 
   return (

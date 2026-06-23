@@ -9,9 +9,42 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
+class LlmBudgetsConfig(BaseModel):
+    flow_structure: int = Field(default=3000, ge=0)
+    module_structure: int = Field(default=2500, ge=0)
+    entities: int = Field(default=2000, ge=0)
+    test_areas: int = Field(default=2000, ge=0)
+    total_cap: int = Field(default=8000, ge=0, alias="totalCap")
+
+    model_config = {"populate_by_name": True}
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "flow_structure": self.flow_structure,
+            "module_structure": self.module_structure,
+            "entities": self.entities,
+            "test_areas": self.test_areas,
+            "total_cap": self.total_cap,
+        }
+
+
+class DiscoverPersonaConfig(BaseModel):
+    persona_id: str = Field(alias="personaId")
+    label: str | None = None
+    auth_config: dict[str, Any] = Field(default_factory=dict, alias="authConfig")
+
+    model_config = {"populate_by_name": True}
+
+
 class DiscoverRequest(BaseModel):
     force: bool = False
+    use_llm: bool = True
+    openapi_url: str | None = Field(default=None, alias="openapiUrl")
+    capture_network: bool = Field(default=True, alias="captureNetwork")
+    capture_har: bool = Field(default=False, alias="captureHar")
     crawl_config_overrides: dict[str, Any] | None = Field(default=None, alias="crawlConfigOverrides")
+    llm_budgets: LlmBudgetsConfig | None = Field(default=None, alias="llmBudgets")
+    personas: list[DiscoverPersonaConfig] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 

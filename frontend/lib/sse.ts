@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient, pipelineStreamBase } from "@/lib/api";
 import type {
   Application,
+  AppMapApprovalStatus,
   ExecutionHighlight,
   PhaseState,
   PipelineEvent,
@@ -213,7 +214,24 @@ export function useExecutionHighlight(events: PipelineEvent[]) {
   return { highlight, reset };
 }
 
-type PhaseMap = { crawl: PhaseState; generate: PhaseState; execute: PhaseState };
+type PhaseMap = {
+  crawl: PhaseState;
+  review: PhaseState;
+  generate: PhaseState;
+  execute: PhaseState;
+};
+
+function deriveReviewPhase(
+  crawl: PhaseState,
+  approvalStatus: AppMapApprovalStatus,
+  skipApproval: boolean
+): PhaseState {
+  if (crawl !== "done") return "pending";
+  if (skipApproval || approvalStatus === "approved") return "done";
+  if (approvalStatus === "rejected") return "failed";
+  if (approvalStatus === "pending") return "running";
+  return "pending";
+}
 
 function stageFromData(data: Record<string, unknown>): string {
   return String(data.stage ?? data.current_stage ?? "");
@@ -223,7 +241,9 @@ export function derivePhaseStates(
   app: Application | null,
   testCases: TestCaseSummary[],
   events: PipelineEvent[],
-  activeRun: PipelineRun | null
+  activeRun: PipelineRun | null,
+  approvalStatus: AppMapApprovalStatus = "none",
+  skipApproval = false
 ): PhaseMap {
   let crawl: PhaseState = app?.last_crawl_at ? "done" : "pending";
   let generate: PhaseState = testCases.length > 0 ? "done" : crawl === "done" ? "pending" : "pending";
@@ -285,7 +305,9 @@ export function derivePhaseStates(
     else if (stage === "execute") execute = "cancelled";
   }
 
-  return { crawl, generate, execute };
+  const review = deriveReviewPhase(crawl, approvalStatus, skipApproval);
+
+  return { crawl, review, generate, execute };
 }
 
 export type CrawlProgress = {
@@ -293,6 +315,10 @@ export type CrawlProgress = {
   pagesDiscovered: number;
   maxPages: number | null;
   statesDiscovered: number;
+  interactionsExecuted: number;
+  discoveredUrls: string[];
+  latestViewLabel: string | null;
+  phase: string | null;
 };
 
 export function useCrawlProgress(events: PipelineEvent[]): CrawlProgress {
@@ -301,6 +327,10 @@ export function useCrawlProgress(events: PipelineEvent[]): CrawlProgress {
     pagesDiscovered: 0,
     maxPages: null,
     statesDiscovered: 0,
+    interactionsExecuted: 0,
+    discoveredUrls: [],
+    latestViewLabel: null,
+    phase: null,
   });
 
   useEffect(() => {
@@ -308,6 +338,11 @@ export function useCrawlProgress(events: PipelineEvent[]): CrawlProgress {
     let pagesDiscovered = 0;
     let maxPages: number | null = null;
     let statesDiscovered = 0;
+    let interactionsExecuted = 0;
+    let latestViewLabel: string | null = null;
+    let phase: string | null = null;
+    const discoveredUrlSet = new Set<string>();
+
     for (const ev of events) {
       if (ev.event !== "stage_progress") continue;
       const d = ev.data;
@@ -315,9 +350,32 @@ export function useCrawlProgress(events: PipelineEvent[]): CrawlProgress {
       if (d.pages_discovered != null) pagesDiscovered = Number(d.pages_discovered);
       if (d.max_pages != null) maxPages = Number(d.max_pages);
       if (d.states_discovered != null) statesDiscovered = Number(d.states_discovered);
+      if (d.interactions_executed != null) {
+        interactionsExecuted = Number(d.interactions_executed);
+      }
+      if (d.view_label) latestViewLabel = String(d.view_label);
+      if (d.phase) phase = String(d.phase);
+      if (d.discovered_url) discoveredUrlSet.add(String(d.discovered_url));
     }
-    if (currentUrl !== null || pagesDiscovered > 0 || maxPages != null || statesDiscovered > 0) {
-      setProgress({ currentUrl, pagesDiscovered, maxPages, statesDiscovered });
+
+    if (
+      currentUrl !== null ||
+      pagesDiscovered > 0 ||
+      maxPages != null ||
+      statesDiscovered > 0 ||
+      interactionsExecuted > 0 ||
+      discoveredUrlSet.size > 0
+    ) {
+      setProgress({
+        currentUrl,
+        pagesDiscovered,
+        maxPages,
+        statesDiscovered,
+        interactionsExecuted,
+        discoveredUrls: [...discoveredUrlSet],
+        latestViewLabel,
+        phase,
+      });
     }
   }, [events]);
 

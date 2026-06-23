@@ -61,7 +61,7 @@ class CrawlConfigInput(BaseModel):
     wait_until: str = Field(default="domcontentloaded")
     wait_for_selector: str | None = None
     page_timeout_ms: int | None = Field(default=30000, ge=1000, le=120000)
-    enable_cic: bool = False
+    enable_cic: bool = True
     cic_mode: str = Field(default="fast")
     cic_unlimited_interactions: bool = False
     max_states_per_url: int = Field(default=20, ge=1, le=100)

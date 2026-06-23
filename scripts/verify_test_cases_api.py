@@ -109,7 +109,7 @@ def main() -> int:
 
         gen = client.post(
             f"/api/v1/apps/{app_id}/generate-tests",
-            json={"force": True, "requireAppmapV2": False},
+            json={"force": True, "requireAppmapV2": False, "use_llm": False},
         )
         if gen.status_code != 202:
             print(f"FAIL generate-tests: {gen.status_code} {gen.text}", file=sys.stderr)
@@ -123,6 +123,7 @@ def main() -> int:
         run_row = session.get(PipelineRun, uuid.UUID(pipeline_run_id))
         if run_row is not None:
             payload["generateConfig"] = dict(run_row.config or {})
+        payload["generateConfig"]["use_llm"] = False
 
         run_design(payload)
         run_generate_scripts(payload)

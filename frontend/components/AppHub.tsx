@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppMapApprovalPanel } from "@/components/AppMapApprovalPanel";
+import { DiscoveryScoreCard } from "@/components/DiscoveryScoreCard";
+import { DiscoverySummaryPanel } from "@/components/DiscoverySummaryPanel";
+import { ModuleTree, type ModuleColorMode } from "@/components/ModuleTree";
 import { AppMapGraph } from "@/components/AppMapGraph";
 import { CrawlLiveFeed } from "@/components/CrawlLiveFeed";
 import { CrawlSettingsFields } from "@/components/CrawlSettingsFields";
+import { DiscoverAdvancedFields } from "@/components/DiscoverAdvancedFields";
 import { CucumberScenarioList } from "@/components/CucumberScenarioList";
 import { ExecutionMediaPanel } from "@/components/ExecutionMediaPanel";
 import { PhaseErrorPanel } from "@/components/PhaseErrorPanel";
@@ -19,6 +24,7 @@ import {
 } from "@/components/ScenarioFilters";
 import { apiClient, ApiError } from "@/lib/api";
 import { crawlSettingsFromConfig, defaultCrawlSettings, toCrawlConfigPayload } from "@/lib/crawlConfig";
+import { defaultDiscoverSettings, toDiscoverConfigPayload } from "@/lib/discoverConfig";
 import { notifyPhaseComplete, requestNotificationPermission, showToast } from "@/lib/notifications";
 import { loadSettings } from "@/lib/settings";
 import {
@@ -30,23 +36,29 @@ import {
 } from "@/lib/sse";
 import type {
   Application,
+  AppMapApprovalResponse,
   PipelineRun,
   ScenarioFilters as FilterState,
   TestCaseSummary,
   TestRunSummary,
   AppMapResponse,
+  DiscoverySummaryResponse,
 } from "@/lib/types";
 
 type Tab = "overview" | "pages" | "appmap" | "scenarios" | "runs";
 
 export function AppHub({ appId }: { appId: string }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const autoCrawlPending = useRef(searchParams.get("auto_crawl") === "1");
   const autoGeneratePending = useRef(false);
+  const autoGenerateAfterApproval = useRef(false);
   const [app, setApp] = useState<Application | null>(null);
   const [cases, setCases] = useState<TestCaseSummary[]>([]);
   const [runs, setRuns] = useState<TestRunSummary[]>([]);
   const [appmap, setAppmap] = useState<AppMapResponse | null>(null);
+  const [discoverySummary, setDiscoverySummary] = useState<DiscoverySummaryResponse | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<Tab>("overview");
   const [busy, setBusy] = useState(false);
@@ -61,6 +73,34 @@ export function AppHub({ appId }: { appId: string }) {
   });
   const [healthOk, setHealthOk] = useState(true);
   const [crawlSettings, setCrawlSettings] = useState(defaultCrawlSettings);
+  const [discoverSettings, setDiscoverSettings] = useState(defaultDiscoverSettings);
+  const [approval, setApproval] = useState<AppMapApprovalResponse | null>(null);
+  const [skipApproval, setSkipApproval] = useState(() => loadSettings().skipAppmapApproval);
+  const [appmapView, setAppmapView] = useState<"modules" | "graph">("graph");
+  const [moduleColorMode, setModuleColorMode] = useState<ModuleColorMode>("risk");
+
+  const refreshDiscoverySummary = useCallback(async () => {
+    setSummaryLoading(true);
+    try {
+      const summary = await apiClient.getDiscoverySummary(appId);
+      setDiscoverySummary(summary);
+    } catch {
+      setDiscoverySummary(null);
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [appId]);
+
+  const refreshApproval = useCallback(async () => {
+    try {
+      const status = await apiClient.getAppMapApproval(appId);
+      setApproval(status);
+      return status;
+    } catch {
+      setApproval(null);
+      return null;
+    }
+  }, [appId]);
 
   const { events, connected, error: sseError } = usePipelineStream(activePipelineRunId);
   const { highlight, reset: resetHighlight } = useExecutionHighlight(events);
@@ -87,12 +127,20 @@ export function AppHub({ appId }: { appId: string }) {
       setActiveRun(null);
     }
     if (appRes.last_crawl_at) {
-      apiClient
-        .getAppMap(appId)
-        .then(setAppmap)
-        .catch(() => setAppmap(null));
+      await Promise.all([
+        apiClient
+          .getAppMap(appId)
+          .then(setAppmap)
+          .catch(() => setAppmap(null)),
+        refreshApproval(),
+        refreshDiscoverySummary(),
+      ]);
+    } else {
+      setAppmap(null);
+      setApproval(null);
+      setDiscoverySummary(null);
     }
-  }, [appId]);
+  }, [appId, refreshApproval, refreshDiscoverySummary]);
 
   useEffect(() => {
     load().catch(console.error);
@@ -100,12 +148,18 @@ export function AppHub({ appId }: { appId: string }) {
   }, [load]);
 
   useEffect(() => {
-    if (tab !== "pages" && tab !== "appmap") return;
+    if (tab !== "pages" && tab !== "appmap" && tab !== "overview") return;
     apiClient
       .getAppMap(appId)
       .then(setAppmap)
       .catch(() => setAppmap(null));
-  }, [appId, tab, events.length]);
+    if (tab === "appmap") {
+      refreshApproval();
+    }
+    if (tab === "overview" || tab === "appmap") {
+      refreshDiscoverySummary();
+    }
+  }, [appId, tab, events.length, refreshApproval, refreshDiscoverySummary]);
 
   useEffect(() => {
     if (!autoCrawlPending.current || busy || !healthOk) return;
@@ -145,12 +199,19 @@ export function AppHub({ appId }: { appId: string }) {
       const stage = String(last.data.stage ?? "");
       if (stage === "discover") {
         notifyPhaseComplete("crawl");
-        showToast("Crawl complete");
+        showToast("Crawl complete — review AppMap before generating tests");
         load();
         apiClient.getAppMap(appId).then(setAppmap).catch(() => setAppmap(null));
+        refreshApproval();
+        refreshDiscoverySummary();
         if (loadSettings().autoGenerateAfterCrawl || autoGeneratePending.current) {
           autoGeneratePending.current = false;
-          startGenerate();
+          if (skipApproval) {
+            startGenerate();
+          } else {
+            autoGenerateAfterApproval.current = true;
+            showToast("Approve the AppMap to continue test generation");
+          }
         }
       }
       if (stage === "generate_scripts") {
@@ -175,9 +236,9 @@ export function AppHub({ appId }: { appId: string }) {
         load();
       }, 1500);
     }
-  }, [events, load]);
+  }, [events, load, appId, refreshApproval, refreshDiscoverySummary]);
 
-  const phases = derivePhaseStates(app, cases, events, activeRun);
+  const phases = derivePhaseStates(app, cases, events, activeRun, approval?.status ?? "none", skipApproval);
   const isPipelineActive =
     activeRun?.status === "running" ||
     activeRun?.status === "pending" ||
@@ -204,8 +265,14 @@ export function AppHub({ appId }: { appId: string }) {
     setErrorMsg(null);
     resetHighlight();
     const payload = toCrawlConfigPayload(crawlSettings);
+    const discoverConfig = toDiscoverConfigPayload(discoverSettings);
     try {
-      const run = await apiClient.discover(appId, { crawlConfig: payload, force });
+      const run = await apiClient.discover(appId, {
+        crawlConfig: payload,
+        force,
+        useLlm: discoverSettings.useLlm,
+        discoverConfig,
+      });
       setActivePipelineRunId(run.pipeline_run_id);
       setActiveRun({
         pipeline_run_id: run.pipeline_run_id,
@@ -231,7 +298,12 @@ export function AppHub({ appId }: { appId: string }) {
           await apiClient.cancelPipeline(activeId);
           setActivePipelineRunId(null);
           setActiveRun(null);
-          const run = await apiClient.discover(appId, { crawlConfig: payload, force: true });
+          const run = await apiClient.discover(appId, {
+            crawlConfig: payload,
+            force: true,
+            useLlm: discoverSettings.useLlm,
+            discoverConfig,
+          });
           setActivePipelineRunId(run.pipeline_run_id);
           setActiveRun({
             pipeline_run_id: run.pipeline_run_id,
@@ -254,8 +326,11 @@ export function AppHub({ appId }: { appId: string }) {
   async function startGenerate() {
     setBusy(true);
     setErrorMsg(null);
+    const requireApproval = !skipApproval;
     try {
-      const run = await apiClient.generateTests(appId);
+      const run = await apiClient.generateTests(appId, {
+        requireAppmapApproval: requireApproval,
+      });
       setActivePipelineRunId(run.pipeline_run_id);
       setActiveRun({
         pipeline_run_id: run.pipeline_run_id,
@@ -267,7 +342,45 @@ export function AppHub({ appId }: { appId: string }) {
         error_message: null,
       });
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Generate failed");
+      if (err instanceof ApiError && err.status === 422) {
+        setErrorMsg(err.message);
+        setTab("appmap");
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : "Generate failed");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleApproveAppMap() {
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      const status = await apiClient.approveAppMap(appId);
+      setApproval(status);
+      showToast("AppMap approved");
+      if (autoGenerateAfterApproval.current) {
+        autoGenerateAfterApproval.current = false;
+        await startGenerate();
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Approve failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRejectAppMap(reason: string) {
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      const status = await apiClient.rejectAppMap(appId, reason);
+      setApproval(status);
+      autoGenerateAfterApproval.current = false;
+      showToast("AppMap rejected");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Reject failed");
     } finally {
       setBusy(false);
     }
@@ -330,6 +443,50 @@ export function AppHub({ appId }: { appId: string }) {
     URL.revokeObjectURL(url);
   }
 
+  async function deleteApp() {
+    if (!app) return;
+    const confirmed = window.confirm(
+      `Delete "${app.name}"?\n\nThis removes the app and all crawled pages, scenarios, runs, and artifacts from the database. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      await apiClient.deleteApp(appId);
+      showToast("Application deleted");
+      router.push("/apps");
+      router.refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setErrorMsg("Stop the active pipeline before deleting this application.");
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : "Delete failed");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canGenerate =
+    healthOk &&
+    !busy &&
+    !isPipelineActive &&
+    phases.crawl === "done" &&
+    (skipApproval || approval?.status === "approved");
+
+  const generateDisabledReason = !healthOk
+    ? "Workers offline"
+    : phases.crawl !== "done"
+      ? "Complete crawl first"
+      : !skipApproval && approval?.status === "pending"
+        ? "Approve AppMap first"
+        : !skipApproval && approval?.status === "rejected"
+          ? "AppMap was rejected — re-crawl or approve"
+          : isPipelineActive
+            ? "Wait for the current pipeline"
+            : null;
+
   const canRunScenarios =
     healthOk && cases.length > 0 && !isPipelineActive && phases.crawl !== "pending";
 
@@ -346,14 +503,19 @@ export function AppHub({ appId }: { appId: string }) {
   const errorCondition =
     !healthOk
       ? ("workers" as const)
-      : cases.length === 0 && phases.generate === "done"
-        ? ("no_scenarios" as const)
-        : phases.execute === "pending" && tab === "scenarios" && cases.length === 0
-          ? ("generate_first" as const)
-          : null;
+      : !skipApproval && approval?.status === "pending" && phases.crawl === "done"
+        ? ("approval_pending" as const)
+        : !skipApproval && approval?.status === "rejected"
+          ? ("approval_rejected" as const)
+          : cases.length === 0 && phases.generate === "done"
+            ? ("no_scenarios" as const)
+            : phases.execute === "pending" && tab === "scenarios" && cases.length === 0
+              ? ("generate_first" as const)
+              : null;
 
   async function runFullPipeline() {
-    autoGeneratePending.current = true;
+    autoGenerateAfterApproval.current = !skipApproval;
+    autoGeneratePending.current = skipApproval;
     await startDiscover();
   }
 
@@ -370,13 +532,26 @@ export function AppHub({ appId }: { appId: string }) {
       <Link href="/apps" className="text-sm text-[var(--muted)] hover:underline">
         ← Back to apps
       </Link>
-      <div>
-        <h1 className="text-2xl font-semibold">{app?.name || "Loading…"}</h1>
-        <p className="text-sm text-[var(--muted)]">{app?.base_url}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">{app?.name || "Loading…"}</h1>
+          <p className="text-sm text-[var(--muted)]">{app?.base_url}</p>
+        </div>
+        {app && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => deleteApp()}
+            className="shrink-0 rounded border border-red-600/40 px-3 py-1.5 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+          >
+            Delete app
+          </button>
+        )}
       </div>
 
       <PipelinePhaseStepper
         crawl={phases.crawl}
+        review={phases.review}
         generate={phases.generate}
         execute={phases.execute}
       />
@@ -386,7 +561,11 @@ export function AppHub({ appId }: { appId: string }) {
           {errorMsg}
         </div>
       )}
-      <PhaseErrorPanel condition={errorCondition} appId={appId} />
+      <PhaseErrorPanel
+        condition={errorCondition}
+        appId={appId}
+        onOpenAppMap={() => setTab("appmap")}
+      />
 
       <div className="flex gap-1 border-b border-[var(--border)]">
         {tabs.map((t) => (
@@ -407,6 +586,8 @@ export function AppHub({ appId }: { appId: string }) {
 
       {tab === "overview" && (
         <div className="space-y-4">
+          <DiscoverySummaryPanel summary={discoverySummary} loading={summaryLoading} />
+          {appmap && <DiscoveryScoreCard appmap={appmap} />}
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
             <p className="mb-3 text-sm font-medium">Crawl settings</p>
             <CrawlSettingsFields
@@ -415,6 +596,18 @@ export function AppHub({ appId }: { appId: string }) {
               disabled={busy || isPipelineActive}
             />
           </div>
+          <DiscoverAdvancedFields
+            settings={discoverSettings}
+            onChange={setDiscoverSettings}
+            disabled={busy || isPipelineActive}
+            onSkipApprovalChange={setSkipApproval}
+          />
+          <AppMapApprovalPanel
+            approval={approval}
+            busy={busy}
+            onApprove={handleApproveAppMap}
+            onReject={handleRejectAppMap}
+          />
           <div className="flex flex-wrap gap-2">
             {isPipelineActive && activePipelineRunId && (
               <p className="w-full text-sm text-amber-400/90">
@@ -429,7 +622,8 @@ export function AppHub({ appId }: { appId: string }) {
               Start crawl
             </button>
             <button
-              disabled={busy || phases.crawl !== "done" || !healthOk}
+              disabled={!canGenerate}
+              title={generateDisabledReason ?? undefined}
               onClick={startGenerate}
               className="rounded border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
             >
@@ -482,7 +676,71 @@ export function AppHub({ appId }: { appId: string }) {
         <PageGrid appId={appId} pages={appmap?.pages ?? []} />
       )}
 
-      {tab === "appmap" && <AppMapGraph appmap={appmap} />}
+      {tab === "appmap" && (
+        <div className="space-y-4">
+          <AppMapApprovalPanel
+            approval={approval}
+            busy={busy}
+            onApprove={handleApproveAppMap}
+            onReject={handleRejectAppMap}
+          />
+          <DiscoveryScoreCard appmap={appmap} />
+          <DiscoverySummaryPanel summary={discoverySummary} loading={summaryLoading} />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setAppmapView("modules")}
+              className={`rounded px-3 py-1.5 text-sm ${
+                appmapView === "modules"
+                  ? "bg-blue-600 text-white"
+                  : "border border-[var(--border)] text-[var(--muted)]"
+              }`}
+            >
+              Modules
+            </button>
+            <button
+              type="button"
+              onClick={() => setAppmapView("graph")}
+              className={`rounded px-3 py-1.5 text-sm ${
+                appmapView === "graph"
+                  ? "bg-blue-600 text-white"
+                  : "border border-[var(--border)] text-[var(--muted)]"
+              }`}
+            >
+              Graph
+            </button>
+            {appmap && appmap.schema_version >= 3 && (
+              <span className="self-center text-xs text-green-400">
+                AppMap v{appmap.schema_version}
+                {appmap.stats.module_count != null && ` · ${appmap.stats.module_count} modules`}
+                {appmap.discovery_completeness_score != null &&
+                  ` · ${appmap.discovery_completeness_score}% complete`}
+              </span>
+            )}
+            {(appmap?.modules?.length ?? 0) > 0 && (
+              <select
+                value={moduleColorMode}
+                onChange={(e) => setModuleColorMode(e.target.value as ModuleColorMode)}
+                className="ml-auto rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs"
+              >
+                <option value="none">Color: default</option>
+                <option value="risk">Color: risk</option>
+                <option value="testability">Color: testability</option>
+                <option value="complexity">Color: complexity</option>
+              </select>
+            )}
+          </div>
+          {appmapView === "modules" ? (
+            <ModuleTree
+              appmap={appmap}
+              colorMode={moduleColorMode}
+              onColorModeChange={setModuleColorMode}
+            />
+          ) : (
+            <AppMapGraph appmap={appmap} moduleColorMode={moduleColorMode} />
+          )}
+        </div>
+      )}
 
       {tab === "scenarios" && (
         <div className="grid gap-6 lg:grid-cols-2">

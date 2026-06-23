@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections import deque
 from collections.abc import Callable
@@ -20,9 +21,11 @@ from aqa_discovery.cic.url_compare import (
     normalize_discovery_url,
 )
 from aqa_discovery.crawl_settings import CrawlSettings
-from aqa_discovery.extractors import detect_dialog_titles, diff_elements, extract_elements, save_page_screenshot
+from aqa_discovery.extractors import detect_dialog_titles, diff_elements, save_page_screenshot
+from aqa_discovery.page_capture import capture_interactive_data
 from aqa_discovery.interaction_safety import build_interaction_key, is_safe_to_interact
 from aqa_discovery.persist import screenshot_path_for_state
+from aqa_discovery.api_types import InteractionEventSnapshot
 from aqa_discovery.types import (
     CrawlStats,
     DiscoveredUrl,
@@ -39,6 +42,7 @@ class CicSessionResult:
     states: list[UIStateSnapshot] = field(default_factory=list)
     transitions: list[StateTransition] = field(default_factory=list)
     discovered_urls: list[DiscoveredUrl] = field(default_factory=list)
+    interaction_events: list[InteractionEventSnapshot] = field(default_factory=list)
     baseline_elements: list = field(default_factory=list)
     all_links: set[str] = field(default_factory=set)
 
@@ -54,8 +58,14 @@ def _make_state_snapshot(
     capture_artifacts: bool,
     baseline_url: str,
     screenshot_all_states: bool,
+    allowed_domains: list[str] | None = None,
 ) -> UIStateSnapshot | None:
-    elements = extract_elements(scope.page, scope=None if scope.is_main else scope)
+    elements, forms = capture_interactive_data(
+        scope.page,
+        scope=None if scope.is_main else scope,
+        page_url=scope.page.url,
+        allowed_domains=allowed_domains,
+    )
     dialogs = detect_dialog_titles(scope.page)
     title = scope.page.title()
     current_url = scope.page.url
@@ -91,6 +101,7 @@ def _make_state_snapshot(
         html_length=0,
         interaction_depth=depth,
         elements=elements,
+        forms=forms,
         screenshot_path=screenshot_path,
         fingerprint=fingerprint,
     )
@@ -107,10 +118,13 @@ def run_cic_session(
     capture_artifacts: bool = False,
     extract_links_fn: Callable | None = None,
     detect_blockers: Callable | None = None,
+    on_progress: Callable[[str, CrawlStats, dict], None] | None = None,
+    session_start: float | None = None,
 ) -> CicSessionResult:
     """Explore in-page UI states via safe interactions across main page and same-origin frames."""
     result = CicSessionResult()
     screenshot_all = settings.cic_screenshot_all_states or settings.cic_mode == "full"
+    started_at = session_start if session_start is not None else time.monotonic()
 
     for scope in iter_cic_scopes(page, include_iframes=settings.cic_enable_iframes):
         _run_cic_on_scope(
@@ -125,9 +139,38 @@ def run_cic_session(
             screenshot_all_states=screenshot_all,
             extract_links_fn=extract_links_fn if scope.is_main else None,
             detect_blockers=detect_blockers,
+            on_progress=on_progress,
+            session_start=started_at,
         )
 
     return result
+
+
+def _view_label_from_action(action: InteractionAction) -> str:
+    text = (action.text_content or "").strip()
+    if text:
+        return text[:80]
+    if action.semantic_selector:
+        return action.semantic_selector[:80]
+    return action.interaction_key[:80]
+
+
+def _emit_cic_progress(
+    on_progress: Callable[[str, CrawlStats, dict], None] | None,
+    current_url: str,
+    stats: CrawlStats,
+    *,
+    force: bool = False,
+    last_emit_at: list[float],
+    **payload: str,
+) -> None:
+    if on_progress is None:
+        return
+    now = time.monotonic()
+    if not force and now - last_emit_at[0] < 0.75:
+        return
+    last_emit_at[0] = now
+    on_progress(current_url, stats, payload)
 
 
 def _run_cic_on_scope(
@@ -143,11 +186,14 @@ def _run_cic_on_scope(
     screenshot_all_states: bool,
     extract_links_fn: Callable | None,
     detect_blockers: Callable | None,
+    on_progress: Callable[[str, CrawlStats, dict], None] | None = None,
+    session_start: float = 0.0,
 ) -> None:
     known_fingerprints: set[str] = set()
     interacted: set[str] = set()
     interactions_this_url = 0
     interactions_this_state: dict[str, int] = {}
+    last_emit_at = [0.0]
 
     baseline = _make_state_snapshot(
         scope,
@@ -159,6 +205,7 @@ def _run_cic_on_scope(
         capture_artifacts=capture_artifacts,
         baseline_url=baseline_url,
         screenshot_all_states=screenshot_all_states,
+        allowed_domains=settings.allowed_domains,
     )
     if baseline is None:
         return
@@ -168,9 +215,31 @@ def _run_cic_on_scope(
     if scope.is_main:
         result.baseline_elements = list(baseline.elements)
     stats.states_discovered += 1
+    _emit_cic_progress(
+        on_progress,
+        scope.page.url,
+        stats,
+        force=True,
+        last_emit_at=last_emit_at,
+        phase="cic_baseline",
+        view_label=(baseline.title or baseline_url)[:80],
+    )
 
     if extract_links_fn and scope.is_main:
-        result.all_links.update(extract_links_fn(scope.page, baseline_url))
+        links = extract_links_fn(scope.page, baseline_url)
+        result.all_links.update(links)
+        for i, link in enumerate(sorted(links)):
+            if i >= 20:
+                break
+            _emit_cic_progress(
+                on_progress,
+                scope.page.url,
+                stats,
+                force=i < 3,
+                last_emit_at=last_emit_at,
+                phase="link_extract",
+                discovered_url=link,
+            )
 
     queue: deque[tuple[str, InteractionAction, str, int]] = deque()
     _enqueue_actions(queue, baseline, scope.page.url, settings, interacted)
@@ -234,17 +303,46 @@ def _run_cic_on_scope(
         interactions_this_state[parent_key] = state_interactions + 1
         stats.interactions_executed += 1
         interacted.add(action.interaction_key)
+        result.interaction_events.append(
+            InteractionEventSnapshot(
+                timestamp_ms=(time.monotonic() - session_start) * 1000.0,
+                interaction_key=action.interaction_key,
+                action_type=action.action_type,
+                semantic_selector=action.semantic_selector,
+                text_content=action.text_content,
+                trigger_action=action.model_dump(),
+            )
+        )
+        if stats.interactions_executed % 5 == 0:
+            _emit_cic_progress(
+                on_progress,
+                scope.page.url,
+                stats,
+                last_emit_at=last_emit_at,
+                phase="cic_interaction",
+            )
 
         navigated_away = navigated_away_from_baseline(post_url, baseline_url)
         if scope.is_main and is_url_discovery(pre_url, post_url, baseline_url):
+            discovered = normalize_discovery_url(post_url)
             result.discovered_urls.append(
                 DiscoveredUrl(
-                    url=normalize_discovery_url(post_url),
+                    url=discovered,
                     discovered_via="interaction",
                     source_page_url=baseline_url,
                     source_state_key=parent_key,
                     trigger_interaction=action,
                 )
+            )
+            _emit_cic_progress(
+                on_progress,
+                post_url,
+                stats,
+                force=True,
+                last_emit_at=last_emit_at,
+                phase="url_discovery",
+                discovered_url=discovered,
+                view_label=_view_label_from_action(action),
             )
 
         new_state = _make_state_snapshot(
@@ -257,6 +355,7 @@ def _run_cic_on_scope(
             capture_artifacts=capture_artifacts,
             baseline_url=baseline_url,
             screenshot_all_states=screenshot_all_states,
+            allowed_domains=settings.allowed_domains,
         )
         if new_state is None:
             if scope.is_main:
@@ -285,6 +384,15 @@ def _run_cic_on_scope(
             StateTransition(from_state_key=parent_key, to_state_key=new_state.state_key, action=action)
         )
         stats.states_discovered += 1
+        _emit_cic_progress(
+            on_progress,
+            scope.page.url,
+            stats,
+            force=True,
+            last_emit_at=last_emit_at,
+            phase="new_state",
+            view_label=_view_label_from_action(action),
+        )
 
         if extract_links_fn and scope.is_main:
             result.all_links.update(extract_links_fn(scope.page, baseline_url))

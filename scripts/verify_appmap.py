@@ -155,9 +155,16 @@ def _verify_appmap_persist_and_api() -> bool:
     if not body.get("pages") or not body.get("elements"):
         print("FAIL OrangeHRM appmap missing pages/elements arrays", file=sys.stderr)
         return False
+    if "forms" not in body:
+        print("FAIL OrangeHRM appmap missing forms array (Phase A)", file=sys.stderr)
+        return False
+    if "api_endpoints" not in body:
+        print("FAIL OrangeHRM appmap missing api_endpoints array (Phase B)", file=sys.stderr)
+        return False
     print(
         f"OK GET /apps/{{id}}/appmap: pages={body['stats']['page_count']} "
-        f"elements={body['stats']['element_count']} flows={body['stats']['flow_count']}"
+        f"elements={body['stats']['element_count']} flows={body['stats']['flow_count']} "
+        f"forms={len(body.get('forms') or [])} apis={len(body.get('api_endpoints') or [])}"
     )
     return True
 

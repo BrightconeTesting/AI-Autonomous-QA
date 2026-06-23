@@ -134,6 +134,7 @@ def run_discovery(payload: dict[str, Any]) -> dict[str, Any]:
         crawl_result = crawl_application(
             application_id,
             crawl_overrides=crawl_overrides,
+            discover_config=payload.get("discoverConfig") or {},
             pipeline_run_id=pipeline_run_id,
             persist=True,
         )
@@ -176,8 +177,11 @@ def run_discovery(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     def _run(ctx: AgentContext) -> AgentResult:
+        discover_config = payload.get("discoverConfig") or {}
+        use_llm = bool(discover_config.get("use_llm", True))
         discovery_input = DiscoveryInput(
             base_url=snapshot.url if snapshot else "https://example.com",
+            use_llm=use_llm,
         )
         return agent.run(discovery_input, ctx)
 

@@ -14,6 +14,7 @@ class GenerateTestsRequest(BaseModel):
     use_llm: bool = True
     generate_scripts: bool = True
     require_appmap_v2: bool = Field(default=True, alias="requireAppmapV2")
+    require_appmap_approval: bool = Field(default=True, alias="requireAppmapApproval")
     force: bool = False
 
     model_config = {"populate_by_name": True}

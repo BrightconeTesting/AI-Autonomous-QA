@@ -1,6 +1,16 @@
 type Props = {
-  condition: "auth" | "no_pages" | "no_appmap" | "no_scenarios" | "workers" | "generate_first" | null;
+  condition:
+    | "auth"
+    | "no_pages"
+    | "no_appmap"
+    | "no_scenarios"
+    | "workers"
+    | "generate_first"
+    | "approval_pending"
+    | "approval_rejected"
+    | null;
   appId?: string;
+  onOpenAppMap?: () => void;
 };
 
 const MESSAGES: Record<
@@ -32,9 +42,17 @@ const MESSAGES: Record<
     title: "Generate tests first",
     detail: "Complete the Generate Tests phase before running scenarios.",
   },
+  approval_pending: {
+    title: "AppMap needs approval",
+    detail: "Review the AppMap and approve it before generating tests.",
+  },
+  approval_rejected: {
+    title: "AppMap was rejected",
+    detail: "Fix crawl settings and re-run discovery, or approve after manual review.",
+  },
 };
 
-export function PhaseErrorPanel({ condition }: Props) {
+export function PhaseErrorPanel({ condition, onOpenAppMap }: Props) {
   if (!condition) return null;
   const msg = MESSAGES[condition];
 
@@ -45,6 +63,15 @@ export function PhaseErrorPanel({ condition }: Props) {
     >
       <p className="font-medium text-red-300">{msg.title}</p>
       <p className="mt-1 text-[var(--muted)]">{msg.detail}</p>
+      {condition === "approval_pending" && onOpenAppMap && (
+        <button
+          type="button"
+          onClick={onOpenAppMap}
+          className="mt-2 text-sm text-blue-400 underline hover:text-blue-300"
+        >
+          Open AppMap tab
+        </button>
+      )}
     </div>
   );
 }

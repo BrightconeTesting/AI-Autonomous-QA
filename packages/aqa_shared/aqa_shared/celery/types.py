@@ -9,6 +9,7 @@ class CeleryTaskPayload(BaseModel):
     plugin_id: str | None = Field(default=None, alias="pluginId")
     mode: str | None = None
     crawl_config_overrides: dict | None = Field(default=None, alias="crawlConfigOverrides")
+    discover_config: dict | None = Field(default=None, alias="discoverConfig")
     generate_config: dict | None = Field(default=None, alias="generateConfig")
     execute_config: dict | None = Field(default=None, alias="executeConfig")
 
@@ -26,6 +27,8 @@ class CeleryTaskPayload(BaseModel):
             data["mode"] = self.mode
         if self.crawl_config_overrides is not None:
             data["crawlConfigOverrides"] = self.crawl_config_overrides
+        if self.discover_config is not None:
+            data["discoverConfig"] = self.discover_config
         if self.generate_config is not None:
             data["generateConfig"] = self.generate_config
         if self.execute_config is not None:

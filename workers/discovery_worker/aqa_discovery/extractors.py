@@ -7,6 +7,7 @@ from typing import Any
 
 from aqa_discovery.interaction_safety import build_interaction_key
 from aqa_discovery.types import ElementSnapshot
+from aqa_shared.testability.enrichment import enrich_element_attributes
 
 _INTERACTIVE_SELECTOR = (
     "a[href], button, input:not([type='hidden']), select, textarea, "
@@ -72,10 +73,11 @@ elements => elements.map(element => {
   }
 
   const attributes = {};
-  for (const attr of ['id', 'name', 'type', 'href', 'value', 'class', 'aria-label', 'data-testid', 'aria-expanded', 'aria-haspopup', 'aria-controls', 'data-modal']) {
+  for (const attr of ['id', 'name', 'type', 'href', 'value', 'class', 'aria-label', 'data-testid', 'aria-expanded', 'aria-haspopup', 'aria-controls', 'data-modal', 'required', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step']) {
     const value = element.getAttribute(attr);
-    if (value) attributes[attr] = value.slice(0, 500);
+    if (value !== null && value !== '') attributes[attr] = value.slice(0, 500);
   }
+  if (element.required) attributes.required = 'true';
 
   const rect = element.getBoundingClientRect();
   const style = window.getComputedStyle(element);
@@ -157,7 +159,13 @@ def build_locators(raw: dict[str, Any]) -> tuple[str | None, str | None]:
     return None, xpath
 
 
-def extract_elements(page, scope=None) -> list[ElementSnapshot]:
+def extract_elements(
+    page,
+    scope=None,
+    *,
+    page_url: str | None = None,
+    allowed_domains: list[str] | None = None,
+) -> list[ElementSnapshot]:
     """Extract interactive elements from an open Playwright page or CIC scope."""
     target = scope if scope is not None else page
     eval_fn = getattr(target, "eval_on_selector_all", None)
@@ -170,6 +178,7 @@ def extract_elements(page, scope=None) -> list[ElementSnapshot]:
 
     snapshots: list[ElementSnapshot] = []
     seen: set[str] = set()
+    resolved_page_url = page_url or getattr(page, "url", None)
 
     for raw in raw_elements:
         semantic, xpath = build_locators(raw)
@@ -178,13 +187,24 @@ def extract_elements(page, scope=None) -> list[ElementSnapshot]:
             continue
         seen.add(dedupe_key)
 
+        attributes = enrich_element_attributes(
+            tag_name=str(raw.get("tag") or "unknown"),
+            role=(raw.get("role") or None),
+            text_content=(raw.get("text") or None),
+            semantic_selector=semantic,
+            xpath_fallback=xpath,
+            attributes=dict(raw.get("attributes") or {}),
+            page_url=resolved_page_url,
+            allowed_domains=allowed_domains,
+        )
+
         item = ElementSnapshot(
             tag_name=str(raw.get("tag") or "unknown")[:64],
             role=(raw.get("role") or None),
             text_content=(raw.get("text") or None),
             semantic_selector=semantic,
             xpath_fallback=xpath,
-            attributes=dict(raw.get("attributes") or {}),
+            attributes=attributes,
             is_visible=bool(raw.get("visible", True)),
         )
         item.interaction_key = build_interaction_key(item)

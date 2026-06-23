@@ -4,6 +4,7 @@ export type UserSettings = {
   videoRetentionDays: number;
   autoStartCrawl: boolean;
   autoGenerateAfterCrawl: boolean;
+  skipAppmapApproval: boolean;
 };
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -12,6 +13,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   videoRetentionDays: 30,
   autoStartCrawl: false,
   autoGenerateAfterCrawl: false,
+  skipAppmapApproval: false,
 };
 
 const STORAGE_KEY = "aqa-dashboard-settings";

@@ -515,6 +515,195 @@ def _finalize_test_suite(
     return safe_selected + destructive_selected
 
 
+def generate_cases_from_recommended_areas(
+    appmap: dict[str, Any],
+    *,
+    max_tests: int = 10,
+    priorities: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Build grounded cases from AppMap recommended_test_areas (Phase D handoff)."""
+    areas = list(appmap.get("recommended_test_areas") or [])
+    if not areas:
+        return []
+
+    selected_priorities = priorities or ["critical", "high", "medium"]
+    indices = _build_indices(appmap)
+    pages_by_id = indices["pages_by_id"]
+    forms_by_id = {
+        str(form.get("form_id") or ""): form for form in (appmap.get("forms") or []) if form.get("form_id")
+    }
+    catalog_by_target = {
+        f"{entry.get('target_type')}:{entry.get('target_id')}": entry
+        for entry in (appmap.get("test_data_catalog") or [])
+        if entry.get("target_type") and entry.get("target_id")
+    }
+    mappings_by_form = {
+        str(mapping.get("form_id") or ""): mapping
+        for mapping in (appmap.get("api_ui_mappings") or [])
+        if mapping.get("form_id") and float(mapping.get("confidence") or 0) >= 0.7
+    }
+
+    cases: list[dict[str, Any]] = []
+    for area in sorted(areas, key=lambda item: float(item.get("priority_index") or 0), reverse=True):
+        priority = str(area.get("priority") or "medium")
+        if priority not in selected_priorities:
+            continue
+        area_type = str(area.get("area_type") or "")
+        form_id = str(area.get("form_id") or "")
+        page_id = str(area.get("page_id") or "")
+        page = pages_by_id.get(page_id) or {}
+        page_url = str(page.get("url") or "").strip()
+        if not page_url and area_type != "auth_flow":
+            continue
+
+        if area_type == "form_validation" and form_id:
+            form = forms_by_id.get(form_id) or {}
+            field_ids = [str(item) for item in (form.get("field_element_ids") or [])]
+            steps: list[dict[str, str]] = [{"action": "navigate", "target": page_url}]
+            catalog = catalog_by_target.get(f"form:{form_id}") or {}
+            replay_steps = list(catalog.get("replay_steps") or [])
+            for replay_step in replay_steps:
+                target = _step_target(replay_step)
+                if not target:
+                    continue
+                action = str(replay_step.get("action") or "click")
+                step: dict[str, str] = {"action": action, "target": target}
+                if replay_step.get("value"):
+                    step["value"] = str(replay_step["value"])
+                steps.append(step)
+            values_by_name = {
+                str(field.get("name") or "").lower(): str(field.get("suggested_safe_value") or "")
+                for field in (catalog.get("fields") or [])
+            }
+            for field_id in field_ids[:4]:
+                element = next(
+                    (item for item in indices["by_page"].get(page_id, []) if str(item.get("element_id")) == field_id),
+                    None,
+                )
+                if element is None:
+                    continue
+                target = _element_target(element)
+                if not target:
+                    continue
+                attrs = dict(element.get("attributes") or {})
+                name = str(attrs.get("name") or element.get("text_content") or "").lower()
+                value = values_by_name.get(name, "qa-sample-value")
+                steps.append({"action": "fill", "target": target, "value": value})
+            submit = next(
+                (
+                    element
+                    for element in indices["by_page"].get(page_id, [])
+                    if (element.get("role") == "button" or (element.get("tag_name") or "").lower() == "button")
+                    and not _is_destructive_text(element.get("text_content"))
+                ),
+                None,
+            )
+            submit_target = _element_target(submit) if submit else None
+            if submit_target:
+                steps.append({"action": "click", "target": submit_target})
+            if len(steps) >= 2:
+                cases.append(
+                    {
+                        "name": str(area.get("area") or "Form validation"),
+                        "feature": f"{page.get('title') or 'Form'} validation",
+                        "priority": priority,
+                        "flow_id": None,
+                        "destructive": False,
+                        "execution_order": "default",
+                        "tags": ["@recommended-area", "@form"],
+                        "recommended_area_id": area.get("area_id"),
+                        "steps": steps,
+                    }
+                )
+            mapping = mappings_by_form.get(form_id)
+            if mapping and len(steps) >= 2:
+                endpoint_id = str(mapping.get("api_endpoint_id") or "")
+                endpoint = next(
+                    (
+                        item
+                        for item in (appmap.get("api_endpoints") or [])
+                        if str(item.get("endpoint_id") or "") == endpoint_id
+                    ),
+                    None,
+                )
+                if endpoint:
+                    method = str(endpoint.get("method") or "POST").upper()
+                    path = str(endpoint.get("path_pattern") or endpoint.get("path") or "")
+                    cases.append(
+                        {
+                            "name": f"{area.get('area')} — paired API ({method} {path})",
+                            "feature": "API/UI paired validation",
+                            "priority": priority,
+                            "flow_id": None,
+                            "destructive": False,
+                            "execution_order": "default",
+                            "tags": ["@recommended-area", "@api-ui-pair"],
+                            "recommended_area_id": area.get("area_id"),
+                            "steps": steps,
+                        }
+                    )
+            continue
+
+        if area_type == "destructive_control":
+            element_id = str(area.get("element_id") or "")
+            element = next(
+                (
+                    item
+                    for item in indices["by_page"].get(page_id, [])
+                    if str(item.get("element_id") or "") == element_id
+                ),
+                None,
+            )
+            target = _element_target(element) if element else None
+            if target:
+                cases.append(
+                    _destructive_case(
+                        name=str(area.get("area") or "Destructive control"),
+                        steps=[
+                            {"action": "navigate", "target": page_url},
+                            {"action": "click", "target": target},
+                        ],
+                    )
+                )
+            continue
+
+        if area_type == "api_contract":
+            endpoint_id = str(area.get("api_endpoint_id") or "")
+            endpoint = next(
+                (
+                    item
+                    for item in (appmap.get("api_endpoints") or [])
+                    if str(item.get("endpoint_id") or "") == endpoint_id
+                ),
+                None,
+            )
+            if endpoint and page_url:
+                method = str(endpoint.get("method") or "POST").upper()
+                path = str(endpoint.get("path_pattern") or endpoint.get("path") or "")
+                cases.append(
+                    {
+                        "name": str(area.get("area") or f"API contract {method} {path}"),
+                        "feature": "API contract validation",
+                        "priority": priority,
+                        "flow_id": None,
+                        "destructive": False,
+                        "execution_order": "default",
+                        "tags": ["@recommended-area", "@api-contract"],
+                        "recommended_area_id": area.get("area_id"),
+                        "steps": [
+                            {"action": "navigate", "target": page_url},
+                            {
+                                "action": "assertVisible",
+                                "target": _pick_assertion_target(indices["by_page"].get(page_id, []))
+                                or page_url,
+                            },
+                        ],
+                    }
+                )
+
+    return _dedupe_cases(cases)[:max_tests]
+
+
 def generate_test_cases(
     appmap: dict[str, Any],
     *,
@@ -529,6 +718,14 @@ def generate_test_cases(
     indices = _build_indices(appmap)
     safe_cases: list[dict[str, Any]] = []
     destructive_cases: list[dict[str, Any]] = []
+
+    safe_cases.extend(
+        generate_cases_from_recommended_areas(
+            appmap,
+            max_tests=max_tests,
+            priorities=selected_priorities,
+        )
+    )
 
     for flow in appmap.get("flows") or []:
         safe_case, flow_destructive = template_flow_replay(flow, indices)

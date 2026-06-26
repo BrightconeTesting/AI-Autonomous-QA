@@ -166,6 +166,24 @@ export const apiClient = {
   queueStats: () => api<{ queues: Record<string, number> }>("/queues/stats").catch(() => null),
   getDashboardSummary: () => api<import("./types").DashboardSummary>("/dashboard/summary"),
   getAppMap: (appId: string) => api<import("./types").AppMapResponse>(`/apps/${appId}/appmap`),
+  listDiscoverRuns: (appId: string) =>
+    api<{ items: import("./types").DiscoverRunSummary[]; total: number }>(
+      `/apps/${appId}/discover-runs`
+    ),
+  getAppMapDiff: (appId: string, fromRunId: string, toRunId: string) =>
+    api<import("./types").AppMapDiffResponse>(
+      `/apps/${appId}/appmap/diff?from_run=${encodeURIComponent(fromRunId)}&to_run=${encodeURIComponent(toRunId)}`
+    ),
+  getTestAreaDecisions: (appId: string) =>
+    api<import("./types").TestAreaDecisionsResponse>(`/apps/${appId}/appmap/test-area-decisions`),
+  updateTestAreaDecisions: (
+    appId: string,
+    decisions: Array<{ area_id: string; status: "approved" | "dismissed" }>
+  ) =>
+    api<import("./types").TestAreaDecisionsResponse>(`/apps/${appId}/appmap/test-area-decisions`, {
+      method: "PUT",
+      body: JSON.stringify({ decisions }),
+    }),
   getDiscoverySummary: (appId: string) =>
     api<import("./types").DiscoverySummaryResponse>(`/apps/${appId}/discovery-summary`),
   getAppMapApproval: (appId: string) =>

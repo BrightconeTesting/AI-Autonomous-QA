@@ -202,6 +202,8 @@ def plan_interactions(
     page_url: str,
     blocked_patterns: list[str] | None = None,
     already_interacted: set[str] | None = None,
+    parent_state_key: str | None = None,
+    context_scoped_dedup: bool = False,
     in_page_only: bool = True,
     max_candidates: int | None = None,
     safe_form_fill: bool = False,
@@ -214,6 +216,11 @@ def plan_interactions(
     candidates: list[tuple[int, InteractionAction]] = []
     interacted = already_interacted or set()
 
+    def _dedup_key(interaction_key: str) -> str:
+        if context_scoped_dedup and parent_state_key:
+            return f"{parent_state_key}::{interaction_key}"
+        return interaction_key
+
     for element in elements:
         if not element.is_visible:
             continue
@@ -221,7 +228,8 @@ def plan_interactions(
             continue
 
         key = build_interaction_key(element)
-        if key in seen or key in interacted:
+        dedup = _dedup_key(key)
+        if key in seen or dedup in interacted:
             continue
         seen.add(key)
 

@@ -312,6 +312,7 @@ export function derivePhaseStates(
 
 export type CrawlProgress = {
   currentUrl: string | null;
+  currentModule: string | null;
   pagesDiscovered: number;
   maxPages: number | null;
   statesDiscovered: number;
@@ -324,6 +325,7 @@ export type CrawlProgress = {
 export function useCrawlProgress(events: PipelineEvent[]): CrawlProgress {
   const [progress, setProgress] = useState<CrawlProgress>({
     currentUrl: null,
+    currentModule: null,
     pagesDiscovered: 0,
     maxPages: null,
     statesDiscovered: 0,
@@ -335,6 +337,7 @@ export function useCrawlProgress(events: PipelineEvent[]): CrawlProgress {
 
   useEffect(() => {
     let currentUrl: string | null = null;
+    let currentModule: string | null = null;
     let pagesDiscovered = 0;
     let maxPages: number | null = null;
     let statesDiscovered = 0;
@@ -347,6 +350,7 @@ export function useCrawlProgress(events: PipelineEvent[]): CrawlProgress {
       if (ev.event !== "stage_progress") continue;
       const d = ev.data;
       if (d.current_url) currentUrl = String(d.current_url);
+      if (d.current_module) currentModule = String(d.current_module);
       if (d.pages_discovered != null) pagesDiscovered = Number(d.pages_discovered);
       if (d.max_pages != null) maxPages = Number(d.max_pages);
       if (d.states_discovered != null) statesDiscovered = Number(d.states_discovered);
@@ -368,6 +372,7 @@ export function useCrawlProgress(events: PipelineEvent[]): CrawlProgress {
     ) {
       setProgress({
         currentUrl,
+        currentModule,
         pagesDiscovered,
         maxPages,
         statesDiscovered,

@@ -138,11 +138,56 @@ def _assert_llm_merge_with_mock() -> None:
     print("OK mocked LLM cases merge, validate, and track tokens")
 
 
+def _assert_recommended_area_handoff() -> None:
+    from aqa_agents.test_design.gap_fill import build_rule_cases_from_test_areas, compact_appmap_for_prompt
+
+    page_id = "p1"
+    endpoint_id = "ep-1"
+    appmap = {
+        **SAMPLE_APPMAP,
+        "api_endpoints": [
+            {
+                "endpoint_id": endpoint_id,
+                "method": "POST",
+                "path": "/api/settings",
+                "path_pattern": "/api/settings",
+            }
+        ],
+        "recommended_test_areas": [
+            {
+                "area_id": "area-1",
+                "area": "API contract — POST /api/settings",
+                "area_type": "api_contract",
+                "priority": "high",
+                "priority_index": 72,
+                "page_id": page_id,
+                "api_endpoint_id": endpoint_id,
+                "signals": ["api:POST:/api/settings"],
+            }
+        ],
+        "test_data_catalog": [],
+        "api_ui_mappings": [],
+    }
+    compact = compact_appmap_for_prompt(appmap)
+    if "recommended_test_areas" not in compact:
+        raise AssertionError("expected compact prompt to include recommended_test_areas")
+    area_cases = build_rule_cases_from_test_areas(
+        appmap,
+        rule_cases=[],
+        max_tests=5,
+        priorities=["high", "medium"],
+    )
+    if not area_cases:
+        raise AssertionError("expected rule cases from recommended_test_areas")
+    print(f"OK recommended_test_areas handoff ({len(area_cases)} area cases)")
+
+
 def main() -> int:
     print("verify:test-design")
     _assert_schema_gate()
     _assert_merge_priority()
     _assert_grounding_rejects_unknown_targets()
+    _assert_recommended_area_handoff()
     _assert_rule_only_without_key()
     _assert_llm_merge_with_mock()
     print("verify:test-design OK")

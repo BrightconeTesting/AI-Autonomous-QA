@@ -30,7 +30,16 @@ class TestDesignAgent:
             return None
         session = get_session_factory()()
         try:
-            return load_appmap_for_application(session, app_id)
+            appmap = load_appmap_for_application(session, app_id)
+            if appmap:
+                from aqa_shared.discovery.test_area_decisions import apply_test_area_decisions
+
+                decisions = appmap.get("test_area_decisions")
+                appmap = apply_test_area_decisions(
+                    appmap,
+                    decisions if isinstance(decisions, dict) else None,
+                )
+            return appmap
         except Exception as exc:
             logger.warning(
                 "TestDesignAgent AppMap load failed",

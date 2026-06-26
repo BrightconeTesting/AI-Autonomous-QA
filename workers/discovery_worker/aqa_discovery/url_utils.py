@@ -35,10 +35,21 @@ def is_http_url(url: str) -> bool:
     return parsed.scheme in ("http", "https") and bool(parsed.hostname)
 
 
+def is_crawl_seed_url(url: str) -> bool:
+    """True for HTTP(S) pages and local file:// fixtures used in verify scripts."""
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme == "file":
+        return bool(parsed.path)
+    return parsed.scheme in ("http", "https") and bool(parsed.hostname)
+
+
 def is_allowed_domain(url: str, allowed_domains: set[str]) -> bool:
     if not allowed_domains:
         return True
-    hostname = urlparse(url).hostname
+    parsed = urlparse(url)
+    if parsed.scheme == "file":
+        return True
+    hostname = parsed.hostname
     if not hostname:
         return False
     return hostname.lower() in allowed_domains

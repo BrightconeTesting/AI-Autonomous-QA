@@ -131,9 +131,27 @@ def _what_should_be_tested_first(
     modules: list[dict[str, Any]],
     flows: list[dict[str, Any]],
     scoring_summary: dict[str, Any] | None,
+    recommended_test_areas: list[dict[str, Any]] | None = None,
 ) -> list[str]:
-    priorities: list[str] = []
-    seen: set[str] = set()
+    if recommended_test_areas:
+        priorities: list[str] = []
+        seen: set[str] = set()
+        for area in sorted(
+            recommended_test_areas,
+            key=lambda item: float(item.get("priority_index") or 0),
+            reverse=True,
+        ):
+            label = str(area.get("area") or "").strip()
+            if label and label not in seen:
+                seen.add(label)
+                priorities.append(label)
+            if len(priorities) >= 8:
+                break
+        if priorities:
+            return priorities
+
+    priorities = []
+    seen = set()
 
     top_risk = list((scoring_summary or {}).get("top_risk_modules") or [])
     module_by_id = {str(module.get("module_id")): module for module in modules}
@@ -279,7 +297,12 @@ def build_discovery_summary(
             for item in api_endpoints
             if item.get("path") or item.get("url")
         ],
-        "what_should_be_tested_first": _what_should_be_tested_first(modules, flows, scoring_summary),
+        "what_should_be_tested_first": _what_should_be_tested_first(
+            modules,
+            flows,
+            scoring_summary,
+            list(appmap.get("recommended_test_areas") or []),
+        ),
         "top_risk_areas": top_risk_areas,
         "module_tree": _build_module_tree(modules),
         "auth_summary": _auth_summary(pages, auth_config, auth_intelligence),

@@ -10,7 +10,9 @@ type Props = {
 function formatProgressEvent(ev: PipelineEvent): string {
   const d = ev.data;
   if (d.error) return String(d.error);
+  if (d.discovered_url && d.phase === "spa_route") return `SPA route + ${String(d.discovered_url)}`;
   if (d.discovered_url) return `+ ${String(d.discovered_url)}`;
+  if (d.current_module && d.phase === "page_loaded") return `module: ${String(d.current_module)}`;
   if (d.view_label && d.phase === "new_state") {
     return `state: ${String(d.view_label)}`;
   }
@@ -74,6 +76,12 @@ export function CrawlLiveFeed({ progress, events, isActive }: Props) {
           CIC exploring current page
           {progress.latestViewLabel ? `: ${progress.latestViewLabel}` : ""}
           …
+        </p>
+      )}
+
+      {progress.currentModule && (
+        <p className="text-xs text-blue-300/90">
+          Module: <span className="font-medium">{progress.currentModule}</span>
         </p>
       )}
 

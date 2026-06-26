@@ -68,6 +68,8 @@ class AppMapModule(BaseModel):
     automation_complexity_score: int | None = None
     complexity_factors: list[str] = Field(default_factory=list)
     business_criticality: str | None = None
+    priority_index: int | None = None
+    recommended_test_areas: list[RecommendedTestArea] = Field(default_factory=list)
 
 
 class NavigationGraphEdge(BaseModel):
@@ -110,6 +112,27 @@ class AppMapStats(BaseModel):
     api_dependency_edge_count: int = 0
     test_data_catalog_count: int = 0
     spa_route_count: int = 0
+    recommended_test_area_count: int = 0
+
+
+class RecommendedTestArea(BaseModel):
+    area_id: str
+    area: str
+    area_type: str | None = None
+    priority: str = "medium"
+    priority_index: int = 0
+    rationale: str | None = None
+    signals: list[str] = Field(default_factory=list)
+    module_id: str | None = None
+    page_id: str | None = None
+    form_id: str | None = None
+    api_endpoint_id: str | None = None
+    element_id: str | None = None
+    entity_id: str | None = None
+    risk_score: int | None = None
+    confidence: float | None = None
+    confidence_factors: list[str] = Field(default_factory=list)
+    review_required: bool | None = None
 
 
 class AppMapSpaRoute(BaseModel):
@@ -125,11 +148,16 @@ class AppMapSpaRoute(BaseModel):
 
 class TestDataCatalogField(BaseModel):
     name: str
+    display_name: str | None = None
     data_type: str = "string"
     required: bool = False
     constraints: dict[str, Any] = Field(default_factory=dict)
     suggested_safe_value: str = ""
     pii_class: str | None = None
+    element_id: str | None = None
+    semantic_selector: str | None = None
+    filled_during_crawl: bool = False
+    needs_test_data: bool = True
 
 
 class TestDataCatalogEntry(BaseModel):
@@ -139,6 +167,13 @@ class TestDataCatalogEntry(BaseModel):
     fields: list[TestDataCatalogField] = Field(default_factory=list)
     synthetic_strategy: str = "deterministic_fixture"
     never_use_live_pii: bool = True
+    state_key: str | None = None
+    replay_steps: list[dict[str, Any]] = Field(default_factory=list)
+    context_label: str | None = None
+    unfilled_field_count: int = 0
+    filled_during_crawl: bool = False
+    reachable_via: list[str] = Field(default_factory=list)
+    alias_target_ids: list[str] = Field(default_factory=list)
 
 
 class AuthIntelligencePersona(BaseModel):
@@ -175,6 +210,9 @@ class ApiDependencyGraphEdge(BaseModel):
     edge_type: str
     confidence: float = 0.0
     observed_count: int = 1
+    dependency_keys: list[str] = Field(default_factory=list)
+    parallel_group_id: str | None = None
+    is_primary: bool = True
 
 
 class ApiDependencyGraphNode(BaseModel):
@@ -182,11 +220,40 @@ class ApiDependencyGraphNode(BaseModel):
     method: str
     path: str
     path_pattern: str
+    depth: int = 0
+    module_id: str | None = None
+    module_name: str | None = None
+    requires_auth: bool = False
+    auth_inherited_from: str | None = None
+    risk_score: int | None = None
+    risk_tier: str | None = None
+    is_entry: bool = False
+    is_leaf: bool = False
+    seen_count: int = 1
+    branching_factor: int = 0
+    is_login_endpoint: bool = False
+    is_session_check: bool = False
 
 
 class ApiDependencyGraph(BaseModel):
     nodes: list[ApiDependencyGraphNode] = Field(default_factory=list)
     edges: list[ApiDependencyGraphEdge] = Field(default_factory=list)
+
+
+class ApiFlowAnalysis(BaseModel):
+    entry_endpoint_ids: list[str] = Field(default_factory=list)
+    leaf_endpoint_ids: list[str] = Field(default_factory=list)
+    critical_path_endpoint_ids: list[str] = Field(default_factory=list)
+    max_depth: int = 0
+    depth_counts: dict[str, int] = Field(default_factory=dict)
+    parallel_group_count: int = 0
+
+
+class ApiEndpointCoverage(BaseModel):
+    covered_endpoint_ids: list[str] = Field(default_factory=list)
+    planned_endpoint_ids: list[str] = Field(default_factory=list)
+    untested_endpoint_ids: list[str] = Field(default_factory=list)
+    unplanned_endpoint_ids: list[str] = Field(default_factory=list)
 
 
 class AppMapDataEntity(BaseModel):
@@ -200,6 +267,10 @@ class AppMapDataEntity(BaseModel):
     confidence_factors: list[str] = Field(default_factory=list)
     review_required: bool = False
     crud_surfaces: dict[str, Any] = Field(default_factory=dict)
+    priority_index: int | None = None
+    testability_score: int | None = None
+    automation_complexity_score: int | None = None
+    risk_factors: list[str] = Field(default_factory=list)
 
 
 class AppMapApiUiMapping(BaseModel):
@@ -225,6 +296,9 @@ class AppMapForm(BaseModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
     field_element_ids: list[str] = Field(default_factory=list)
     risk_score: int | None = None
+    risk_factors: list[str] = Field(default_factory=list)
+    testability_score: int | None = None
+    priority_index: int | None = None
 
 
 class AppMapApiEndpoint(BaseModel):
@@ -238,6 +312,10 @@ class AppMapApiEndpoint(BaseModel):
     seen_on_page_ids: list[str] = Field(default_factory=list)
     seen_count: int = 1
     risk_score: int | None = None
+    risk_factors: list[str] = Field(default_factory=list)
+    automation_complexity_score: int | None = None
+    priority_index: int | None = None
+    body_keys: list[str] = Field(default_factory=list)
 
 
 class ScoringSummary(BaseModel):
@@ -247,6 +325,9 @@ class ScoringSummary(BaseModel):
     discovery_completeness_score: int = 0
     high_risk_modules: list[str] = Field(default_factory=list)
     top_risk_modules: list[dict[str, Any]] = Field(default_factory=list)
+    high_risk_form_count: int = 0
+    mutating_api_count: int = 0
+    scored_entity_count: int = 0
     recommendations: list[str] = Field(default_factory=list)
 
 
@@ -271,6 +352,9 @@ class AppMapResponse(BaseModel):
     api_ui_mappings: list[AppMapApiUiMapping] = Field(default_factory=list)
     data_entities: list[AppMapDataEntity] = Field(default_factory=list)
     api_dependency_graph: ApiDependencyGraph | None = None
+    api_flow_analysis: ApiFlowAnalysis | None = None
+    api_coverage: ApiEndpointCoverage | None = None
     auth_intelligence: AuthIntelligence | None = None
     test_data_catalog: list[TestDataCatalogEntry] = Field(default_factory=list)
     spa_routes: list[AppMapSpaRoute] = Field(default_factory=list)
+    recommended_test_areas: list[RecommendedTestArea] = Field(default_factory=list)

@@ -29,6 +29,8 @@ from aqa_shared.db.models import (
     PageDiscovery,
     PageState,
     PipelineRun,
+    PipelineStage,
+    PipelineStatus,
     StateTransition as StateTransitionRow,
 )
 from aqa_shared.db.session import get_session_factory
@@ -298,11 +300,6 @@ def _serialize_api_endpoints(endpoints: list[ApiEndpoint]) -> list[dict]:
     output: list[dict] = []
     for endpoint in endpoints:
         method = str(endpoint.method or "GET").upper()
-        risk = 30
-        if method not in {"GET", "HEAD", "OPTIONS"}:
-            risk += 35
-        if any(kw in str(endpoint.path_pattern or "").lower() for kw in ("user", "auth", "payment", "admin")):
-            risk += 20
         output.append(
             {
                 "endpoint_id": str(endpoint.endpoint_id),
@@ -315,10 +312,39 @@ def _serialize_api_endpoints(endpoints: list[ApiEndpoint]) -> list[dict]:
                 "seen_on_page_ids": [str(page_id) for page_id in (endpoint.seen_page_ids or [])],
                 "first_seen_page_id": str(endpoint.first_seen_page_id) if endpoint.first_seen_page_id else None,
                 "seen_count": int(endpoint.seen_count or 1),
-                "risk_score": max(0, min(100, risk)),
             }
         )
     return output
+
+
+def _finalize_api_dependency_graph(
+    api_dependency_graph: dict,
+    *,
+    api_endpoints: list[dict],
+    modules: list[dict],
+    auth_intelligence: dict,
+    network_events_by_page: dict[str, list[dict]],
+) -> tuple[dict, dict, list[dict]]:
+    from aqa_agents.discovery.api_dependency_graph import (
+        _build_nodes,
+        _merge_body_keys_from_timeline,
+        enrich_api_dependency_graph,
+    )
+    from aqa_agents.discovery.api_flow_analysis import build_api_flow_analysis
+
+    _, key_to_id = _build_nodes(api_endpoints)
+    endpoints_with_keys = _merge_body_keys_from_timeline(
+        api_endpoints, network_events_by_page, key_to_id
+    )
+    graph = enrich_api_dependency_graph(
+        api_dependency_graph,
+        api_endpoints=endpoints_with_keys,
+        modules=modules,
+        auth_intelligence=auth_intelligence,
+        network_events_by_page=network_events_by_page,
+    )
+    analysis = build_api_flow_analysis(graph, endpoints_with_keys)
+    return graph, analysis, endpoints_with_keys
 
 
 def _serialize_forms(forms: list[Form]) -> list[dict]:
@@ -327,13 +353,6 @@ def _serialize_forms(forms: list[Form]) -> list[dict]:
         field_ids = [str(item) for item in (form.field_element_ids or [])]
         method = str(form.method or "get").lower()
         attrs = dict(form.attributes or {})
-        risk = 20
-        if method not in {"", "get"}:
-            risk += 25
-        risk += min(20, len(field_ids) * 2)
-        name_blob = f"{attrs.get('name', '')} {form.action or ''}".lower()
-        if any(kw in name_blob for kw in ("login", "register", "payment", "checkout", "password")):
-            risk += 20
         output.append(
             {
                 "form_id": str(form.form_id),
@@ -344,7 +363,6 @@ def _serialize_forms(forms: list[Form]) -> list[dict]:
                 "method": method,
                 "attributes": attrs,
                 "field_element_ids": field_ids,
-                "risk_score": max(0, min(100, risk)),
             }
         )
     return output
@@ -481,9 +499,12 @@ def build_appmap_document(
     api_ui_mappings: list[dict] | None = None,
     data_entities: list[dict] | None = None,
     api_dependency_graph: dict | None = None,
+    api_flow_analysis: dict | None = None,
+    api_coverage: dict | None = None,
     auth_intelligence: dict | None = None,
     test_data_catalog: list[dict] | None = None,
     spa_routes: list[dict] | None = None,
+    recommended_test_areas: list[dict] | None = None,
     scoring_summary: dict | None = None,
     discovery_completeness_score: int | None = None,
     recommendations: list[str] | None = None,
@@ -573,6 +594,10 @@ def build_appmap_document(
         doc["stats"]["api_dependency_edge_count"] = len(api_dependency_graph.get("edges") or [])
         doc.setdefault("inventory", {})
         doc["inventory"]["api_dependency_edges"] = len(api_dependency_graph.get("edges") or [])
+    if api_flow_analysis:
+        doc["api_flow_analysis"] = api_flow_analysis
+    if api_coverage:
+        doc["api_coverage"] = api_coverage
     catalog_list = test_data_catalog or []
     if catalog_list:
         doc["test_data_catalog"] = catalog_list
@@ -585,6 +610,12 @@ def build_appmap_document(
         doc["stats"]["spa_route_count"] = len(spa_route_list)
         doc.setdefault("inventory", {})
         doc["inventory"]["spa_routes"] = len(spa_route_list)
+    area_list = recommended_test_areas or []
+    if area_list:
+        doc["recommended_test_areas"] = area_list
+        doc["stats"]["recommended_test_area_count"] = len(area_list)
+        doc.setdefault("inventory", {})
+        doc["inventory"]["recommended_test_areas"] = len(area_list)
     if scoring_summary:
         doc["scoring_summary"] = scoring_summary
     if discovery_completeness_score is not None:
@@ -739,6 +770,7 @@ def build_and_persist_appmap(
             elements=element_dicts,
             api_endpoints=api_endpoint_dicts,
             data_entities=data_entities,
+            states=state_dicts,
             run_id=str(pipeline_run_id),
         )
         auth_intelligence = build_auth_intelligence(
@@ -781,9 +813,65 @@ def build_and_persist_appmap(
             api_ui_mappings=api_ui_mapping_dicts,
             data_entities=data_entities,
             spa_routes=spa_routes,
+            api_dependency_graph=api_dependency_graph,
         )
+        from aqa_agents.discovery.feedback import apply_feedback_to_appmap
+
+        scored_appmap = apply_feedback_to_appmap(
+            {
+                "elements": element_dicts,
+                "flows": scored["flows"],
+                "api_ui_mappings": api_ui_mapping_dicts,
+                "auth_intelligence": auth_intelligence,
+            },
+            crawl_config,
+        )
+        element_dicts = scored_appmap.get("elements") or element_dicts
+        scored["flows"] = scored_appmap.get("flows") or scored["flows"]
+        api_ui_mapping_dicts = scored_appmap.get("api_ui_mappings") or api_ui_mapping_dicts
+        auth_intelligence = scored_appmap.get("auth_intelligence") or auth_intelligence
+        discovery_feedback_applied = scored_appmap.get("discovery_feedback_applied")
         modules = scored["modules"]
         flow_output = scored["flows"]
+        form_dicts = scored["forms"]
+        api_endpoint_dicts = scored["api_endpoints"]
+        data_entities = scored["data_entities"]
+        api_dependency_graph, api_flow_analysis, api_endpoint_dicts = _finalize_api_dependency_graph(
+            api_dependency_graph,
+            api_endpoints=api_endpoint_dicts,
+            modules=modules,
+            auth_intelligence=auth_intelligence,
+            network_events_by_page=network_events_by_page,
+        )
+
+        from aqa_agents.discovery.test_areas import (
+            attach_module_test_areas,
+            build_test_areas_rule_pass,
+            structure_test_areas_with_llm,
+        )
+
+        test_areas_budget = budget_tracker.remaining_for_stage("test_areas")
+        rule_test_areas = build_test_areas_rule_pass(
+            pages=page_dicts,
+            elements=element_dicts,
+            forms=form_dicts,
+            api_endpoints=api_endpoint_dicts,
+            api_ui_mappings=api_ui_mapping_dicts,
+            data_entities=data_entities,
+            flows=flow_output,
+            modules=modules,
+            auth_intelligence=auth_intelligence,
+        )
+        recommended_test_areas, area_tokens, area_cost, _area_skip = structure_test_areas_with_llm(
+            rule_areas=rule_test_areas,
+            modules=modules,
+            use_llm=use_llm,
+            token_budget_remaining=test_areas_budget,
+        )
+        budget_tracker.record_usage("test_areas", area_tokens)
+        tokens_used += area_tokens
+        cost_estimate += area_cost
+        modules = attach_module_test_areas(modules, recommended_test_areas)
 
         appmap_doc = build_appmap_document(
             application_id=application_id,
@@ -800,13 +888,17 @@ def build_and_persist_appmap(
             api_ui_mappings=api_ui_mapping_dicts,
             data_entities=data_entities,
             api_dependency_graph=api_dependency_graph,
+            api_flow_analysis=api_flow_analysis,
             auth_intelligence=auth_intelligence,
             test_data_catalog=test_data_catalog,
             spa_routes=spa_routes,
+            recommended_test_areas=recommended_test_areas,
             scoring_summary=scored["scoring_summary"],
             discovery_completeness_score=scored["discovery_completeness_score"],
             recommendations=scored["recommendations"],
         )
+        if discovery_feedback_applied:
+            appmap_doc["discovery_feedback_applied"] = discovery_feedback_applied
         appmap_hash = _compute_appmap_hash(page_dicts, flow_output, len(element_dicts))
 
         dest = appmap_artifact_path(pipeline_run_id)
@@ -944,6 +1036,7 @@ def load_appmap_for_application(session: Session, app_id: uuid.UUID) -> dict | N
         elements=element_dicts,
         api_endpoints=api_endpoint_dicts,
         data_entities=data_entities,
+        states=state_dicts,
     )
     auth_intelligence = build_auth_intelligence(
         pages=page_dicts,
@@ -979,7 +1072,48 @@ def load_appmap_for_application(session: Session, app_id: uuid.UUID) -> dict | N
         api_ui_mappings=api_ui_mapping_dicts,
         data_entities=data_entities,
         spa_routes=spa_routes,
+        api_dependency_graph=api_dependency_graph,
     )
+    from aqa_agents.discovery.feedback import apply_feedback_to_appmap
+
+    feedback_adjusted = apply_feedback_to_appmap(
+        {
+            "elements": element_dicts,
+            "flows": scored["flows"],
+            "api_ui_mappings": api_ui_mapping_dicts,
+            "auth_intelligence": auth_intelligence,
+        },
+        dict(app.crawl_config or {}),
+    )
+    element_dicts = feedback_adjusted.get("elements") or element_dicts
+    scored["flows"] = feedback_adjusted.get("flows") or scored["flows"]
+    api_ui_mapping_dicts = feedback_adjusted.get("api_ui_mappings") or api_ui_mapping_dicts
+    auth_intelligence = feedback_adjusted.get("auth_intelligence") or auth_intelligence
+    discovery_feedback_applied = feedback_adjusted.get("discovery_feedback_applied")
+    form_dicts = scored["forms"]
+    api_endpoint_dicts = scored["api_endpoints"]
+    data_entities = scored["data_entities"]
+    api_dependency_graph, api_flow_analysis, api_endpoint_dicts = _finalize_api_dependency_graph(
+        api_dependency_graph,
+        api_endpoints=api_endpoint_dicts,
+        modules=scored["modules"],
+        auth_intelligence=auth_intelligence,
+        network_events_by_page=network_events_by_page,
+    )
+    from aqa_agents.discovery.test_areas import attach_module_test_areas, build_test_areas_rule_pass
+
+    recommended_test_areas = build_test_areas_rule_pass(
+        pages=page_dicts,
+        elements=element_dicts,
+        forms=form_dicts,
+        api_endpoints=api_endpoint_dicts,
+        api_ui_mappings=api_ui_mapping_dicts,
+        data_entities=data_entities,
+        flows=scored["flows"],
+        modules=scored["modules"],
+        auth_intelligence=auth_intelligence,
+    )
+    modules_with_areas = attach_module_test_areas(scored["modules"], recommended_test_areas)
     document = build_appmap_document(
         application_id=app_id,
         last_crawl_at=app.last_crawl_at,
@@ -988,19 +1122,46 @@ def load_appmap_for_application(session: Session, app_id: uuid.UUID) -> dict | N
         flows=scored["flows"],
         states=state_dicts,
         transitions=transition_dicts,
-        modules=scored["modules"],
+        modules=modules_with_areas,
         navigation_graph=navigation_graph,
         forms=form_dicts,
         api_endpoints=api_endpoint_dicts,
         api_ui_mappings=api_ui_mapping_dicts,
         data_entities=data_entities,
         api_dependency_graph=api_dependency_graph,
+        api_flow_analysis=api_flow_analysis,
         auth_intelligence=auth_intelligence,
         test_data_catalog=test_data_catalog,
         spa_routes=spa_routes,
+        recommended_test_areas=recommended_test_areas,
         scoring_summary=scored["scoring_summary"],
         discovery_completeness_score=scored["discovery_completeness_score"],
         recommendations=scored["recommendations"],
     )
     document["discoveries"] = discovery_dicts
+    if discovery_feedback_applied:
+        document["discovery_feedback_applied"] = discovery_feedback_applied
+    persona_visibility = load_persona_visibility(session, app_id=app_id)
+    if persona_visibility:
+        document["persona_visibility"] = persona_visibility
+    from aqa_shared.discovery.test_area_decisions import annotate_test_areas_with_decisions
+
+    latest_run = session.scalars(
+        select(PipelineRun)
+        .where(
+            PipelineRun.application_id == app_id,
+            PipelineRun.current_stage == PipelineStage.discover,
+            PipelineRun.status == PipelineStatus.completed,
+        )
+        .order_by(PipelineRun.ended_at.desc().nullslast(), PipelineRun.started_at.desc())
+        .limit(1)
+    ).first()
+    run_config = dict(latest_run.config or {}) if latest_run else {}
+    decisions = run_config.get("recommended_test_area_decisions")
+    if document.get("recommended_test_areas"):
+        document["recommended_test_areas"] = annotate_test_areas_with_decisions(
+            list(document["recommended_test_areas"]),
+            decisions if isinstance(decisions, dict) else None,
+        )
+    document["test_area_decisions"] = decisions if isinstance(decisions, dict) else {}
     return document

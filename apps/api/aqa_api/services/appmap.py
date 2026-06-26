@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from aqa_agents.discovery.appmap import load_appmap_for_application
+from aqa_api.services.api_coverage import build_api_endpoint_coverage
 from aqa_api.schemas.appmap import (
     AppMapElement,
     AppMapFlow,
@@ -14,6 +15,8 @@ from aqa_api.schemas.appmap import (
     AppMapApiUiMapping,
     AppMapDataEntity,
     ApiDependencyGraph,
+    ApiEndpointCoverage,
+    ApiFlowAnalysis,
     AuthIntelligence,
     AppMapForm,
     AppMapModule,
@@ -24,6 +27,7 @@ from aqa_api.schemas.appmap import (
     AppMapStats,
     AppMapTransition,
     NavigationGraphEdge,
+    RecommendedTestArea,
     ScoringSummary,
     TestDataCatalogEntry,
 )
@@ -35,6 +39,16 @@ def get_appmap(db: Session, app_id: UUID) -> AppMapResponse | None:
         return None
     stats_raw = raw.get("stats") or {}
     scoring_raw = raw.get("scoring_summary")
+    coverage_raw = raw.get("api_coverage")
+    if not isinstance(coverage_raw, dict):
+        coverage_raw = build_api_endpoint_coverage(
+            db,
+            app_id=app_id,
+            api_endpoints=list(raw.get("api_endpoints") or []),
+            api_ui_mappings=list(raw.get("api_ui_mappings") or []),
+            flows=list(raw.get("flows") or []),
+            recommended_test_areas=list(raw.get("recommended_test_areas") or []),
+        )
     return AppMapResponse(
         schema_version=int(raw.get("schema_version") or 1),
         application_id=UUID(str(raw["application_id"])),
@@ -70,6 +84,12 @@ def get_appmap(db: Session, app_id: UUID) -> AppMapResponse | None:
         api_dependency_graph=ApiDependencyGraph.model_validate(raw["api_dependency_graph"])
         if isinstance(raw.get("api_dependency_graph"), dict)
         else None,
+        api_flow_analysis=ApiFlowAnalysis.model_validate(raw["api_flow_analysis"])
+        if isinstance(raw.get("api_flow_analysis"), dict)
+        else None,
+        api_coverage=ApiEndpointCoverage.model_validate(coverage_raw)
+        if isinstance(coverage_raw, dict)
+        else None,
         auth_intelligence=AuthIntelligence.model_validate(raw["auth_intelligence"])
         if isinstance(raw.get("auth_intelligence"), dict)
         else None,
@@ -77,4 +97,7 @@ def get_appmap(db: Session, app_id: UUID) -> AppMapResponse | None:
             TestDataCatalogEntry.model_validate(entry) for entry in raw.get("test_data_catalog") or []
         ],
         spa_routes=[AppMapSpaRoute.model_validate(route) for route in raw.get("spa_routes") or []],
+        recommended_test_areas=[
+            RecommendedTestArea.model_validate(area) for area in raw.get("recommended_test_areas") or []
+        ],
     )

@@ -46,6 +46,19 @@ class DiscoveredUrl(BaseModel):
     source_page_url: str
     source_state_key: str | None = None
     trigger_interaction: InteractionAction | None = None
+    arrival_replay_path: list[InteractionAction] = Field(default_factory=list)
+
+
+class StateFrontierItem(BaseModel):
+    """Global crawl frontier unit — a UI state reachable via replay on a URL."""
+
+    url: str
+    replay_path: list[InteractionAction] = Field(default_factory=list)
+    state_fingerprint: str | None = None
+    state_key: str | None = None
+    page_depth: int = Field(default=0, ge=0)
+    explore_children_only: bool = False
+    label: str | None = None
 
 
 class SpaRouteEvent(BaseModel):
@@ -84,6 +97,8 @@ class PageSnapshot(BaseModel):
     status: int
     html_length: int = Field(ge=0)
     depth: int = Field(default=0, ge=0)
+    content_fingerprint: str | None = None
+    skipped_unchanged: bool = False
     elements: list[ElementSnapshot] = Field(default_factory=list)
     forms: list[FormSnapshot] = Field(default_factory=list)
     api_endpoints: list[ApiEndpointSnapshot] = Field(default_factory=list)
@@ -108,6 +123,7 @@ class CrawlStats(BaseModel):
     skipped_interaction_safety: int = 0
     skipped_duplicate_state: int = 0
     skipped_robots: int = 0
+    skipped_unchanged: int = 0
     max_pages: int = 0
     max_depth: int = 0
 

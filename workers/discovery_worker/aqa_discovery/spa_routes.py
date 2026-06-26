@@ -38,6 +38,7 @@ _SPA_LISTENER_SCRIPT = """
   window.addEventListener('hashchange', () => {
     record('', location.href, 'hash_route');
   });
+  record('', location.href, 'initial_route');
 })();
 """
 
@@ -89,3 +90,16 @@ def aggregate_spa_route_events(pages) -> list[SpaRouteEvent]:
             seen.add(key)
             merged.append(event)
     return merged
+
+
+def spa_urls_for_enqueue(events: list[SpaRouteEvent]) -> list[str]:
+    """Return same-origin SPA navigation targets suitable for BFS enqueue."""
+    urls: list[str] = []
+    seen: set[str] = set()
+    for event in events:
+        to_url = str(event.to_url or "").strip()
+        if not to_url or to_url in seen:
+            continue
+        seen.add(to_url)
+        urls.append(to_url)
+    return urls

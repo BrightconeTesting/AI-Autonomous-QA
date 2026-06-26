@@ -44,6 +44,12 @@ _CIC_FULL_DEFAULTS: dict[str, object] = {
     "max_interactions_per_state": 50,
     "cic_max_options_per_select": 20,
     "cic_max_graph_paths_per_page": 20,
+    "cic_state_replay": True,
+    "cic_level_bfs": True,
+    "cic_replay_verify_fingerprint": True,
+    "cic_context_scoped_dedup": True,
+    "cic_virtual_forms": True,
+    "cic_global_state_graph": True,
 }
 
 
@@ -82,12 +88,23 @@ class CrawlSettings(BaseModel):
     openapi_url: str | None = None
     excluded_analytics_domains: list[str] = Field(default_factory=list)
     blocked_interaction_patterns: list[str] = Field(default_factory=list)
+    enable_pushstate_listener: bool = True
+    enqueue_spa_route_urls: bool = True
+    incremental_crawl: bool = True
+    pierce_shadow_dom: bool = True
     headless: bool = True
     browser_channel: str | None = None
     user_agent: str | None = None
     locale: str | None = None
     viewport_width: int | None = Field(default=None, ge=320, le=3840)
     viewport_height: int | None = Field(default=None, ge=240, le=2160)
+    # State-based SPA exploration (experimental — off by default; enabled in cic_mode=full)
+    cic_state_replay: bool = False
+    cic_level_bfs: bool = False
+    cic_replay_verify_fingerprint: bool = True
+    cic_context_scoped_dedup: bool = False
+    cic_virtual_forms: bool = False
+    cic_global_state_graph: bool = False
 
     @classmethod
     def from_crawl_config(
@@ -166,10 +183,20 @@ class CrawlSettings(BaseModel):
             openapi_url=config.get("openapi_url"),
             excluded_analytics_domains=list(config.get("excluded_analytics_domains") or []),
             blocked_interaction_patterns=list(config.get("blocked_interaction_patterns") or []),
+            enable_pushstate_listener=bool(config.get("enable_pushstate_listener", True)),
+            enqueue_spa_route_urls=bool(config.get("enqueue_spa_route_urls", True)),
+            incremental_crawl=bool(config.get("incremental_crawl", True)),
+            pierce_shadow_dom=bool(config.get("pierce_shadow_dom", True)),
             headless=bool(config.get("headless", True)),
             browser_channel=config.get("browser_channel"),
             user_agent=config.get("user_agent"),
             locale=config.get("locale"),
             viewport_width=config.get("viewport_width"),
             viewport_height=config.get("viewport_height"),
+            cic_state_replay=bool(config.get("cic_state_replay", False)),
+            cic_level_bfs=bool(config.get("cic_level_bfs", False)),
+            cic_replay_verify_fingerprint=bool(config.get("cic_replay_verify_fingerprint", True)),
+            cic_context_scoped_dedup=bool(config.get("cic_context_scoped_dedup", False)),
+            cic_virtual_forms=bool(config.get("cic_virtual_forms", False)),
+            cic_global_state_graph=bool(config.get("cic_global_state_graph", False)),
         )

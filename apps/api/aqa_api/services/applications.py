@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from aqa_api.config import settings
 from aqa_api.schemas.apps import ApplicationResponse, CreateApplicationRequest, PublicAuthConfig
 from aqa_api.services.artifacts import artifact_storage_root
-from aqa_api.services.pipeline_runs import find_active_pipeline_run
+from aqa_api.services.pipeline_runs import find_active_pipeline_run, reconcile_stale_active_pipeline
 from aqa_shared.crypto.auth_config import (
     is_encrypted_auth_config,
     prepare_auth_config_for_storage,
@@ -159,6 +159,7 @@ def delete_application(db: Session, app_id: UUID) -> bool:
     if app is None:
         return False
 
+    reconcile_stale_active_pipeline(db, app_id)
     active = find_active_pipeline_run(db, app_id)
     if active is not None:
         from aqa_api.services.pipeline_runs import ActivePipelineConflictError

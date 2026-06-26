@@ -139,6 +139,7 @@ def execute_pipeline(payload: dict[str, Any]) -> dict[str, Any]:
                 artifact_ids: list[str] = []
                 step_results: list[dict[str, Any]] = []
                 step_timestamps_ms: list[int] = []
+                current_page_url: str | None = app.base_url
 
                 script = session.scalar(
                     select(TestScript)
@@ -166,6 +167,8 @@ def execute_pipeline(payload: dict[str, Any]) -> dict[str, Any]:
                         )
                         step_start = time.monotonic()
                         try:
+                            if str(step.get("action") or "") == "navigate":
+                                current_page_url = str(step.get("target") or current_page_url)
                             run_step(page, step)
                             step_outcome = "passed"
                         except Exception as exc:
@@ -174,6 +177,21 @@ def execute_pipeline(payload: dict[str, Any]) -> dict[str, Any]:
                             error_msg = str(exc)
                             duration_ms = int((time.monotonic() - step_start) * 1000)
                             step_timestamps_ms.append(int((time.monotonic() - scenario_start) * 1000))
+                            try:
+                                from aqa_agents.discovery.feedback import ingest_execution_step_failure
+
+                                ingest_execution_step_failure(
+                                    session,
+                                    app_id=application_id,
+                                    pipeline_run_id=pipeline_run_id,
+                                    testcase_id=str(case.testcase_id),
+                                    step_index=step_index,
+                                    step=step if isinstance(step, dict) else {},
+                                    error_msg=error_msg,
+                                    page_url=current_page_url,
+                                )
+                            except Exception:
+                                logger.exception("Failed to ingest discovery feedback")
                             _publish(
                                 "step_completed",
                                 pipeline_run_id,

@@ -578,8 +578,15 @@ def structure_entities_with_llm(
         return rule_entities, 0, 0.0, str(exc)
 
     content = (response.choices[0].message.content or "").strip()
-    tokens_used = int(response.usage.total_tokens if response.usage else 0)
-    cost_estimate = estimate_cost_usd(model=model, tokens=tokens_used)
+    usage = response.usage
+    prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    tokens_used = prompt_tokens + completion_tokens
+    cost_estimate = estimate_cost_usd(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        model=model,
+    )
     try:
         payload = json.loads(content)
         llm_entities = payload.get("data_entities") or payload.get("entities") or []

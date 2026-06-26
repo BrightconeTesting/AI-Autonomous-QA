@@ -10,7 +10,9 @@ from aqa_api.config import settings
 from aqa_api.deps import get_db
 from aqa_api.schemas.apps import ApplicationListResponse, ApplicationResponse, CreateApplicationRequest
 from aqa_api.schemas.appmap import AppMapResponse
+from aqa_api.schemas.appmap_diff import AppMapDiffResponse, DiscoverRunListResponse
 from aqa_api.schemas.discovery_summary import DiscoverySummaryResponse
+from aqa_api.schemas.test_area_decisions import TestAreaDecisionsResponse, UpdateTestAreaDecisionsRequest
 from aqa_api.schemas.appmap_approval import (
     AppMapApprovalResponse,
     AppMapApprovalStatusResponse,
@@ -20,10 +22,12 @@ from aqa_api.schemas.errors import ProblemDetail
 from aqa_api.schemas.generate_tests import GenerateTestsRequest, GenerateTestsResponse
 from aqa_api.schemas.pipeline_runs import ActivePipelineResponse, DiscoverRequest, DiscoverResponse
 from aqa_api.services import appmap as appmap_service
+from aqa_api.services import appmap_diff as appmap_diff_service
 from aqa_api.services import discovery_summary as discovery_summary_service
 from aqa_api.services import appmap_approval as appmap_approval_service
 from aqa_api.services import applications as app_service
 from aqa_api.services import pipeline_runs as pipeline_service
+from aqa_api.services import test_area_decisions as test_area_decisions_service
 from aqa_api.services import test_generation as test_generation_service
 from aqa_api.services.pipeline_runs import ActivePipelineConflictError
 from aqa_api.services.test_generation import AppMapApprovalRequiredError, AppMapPreconditionError
@@ -155,6 +159,90 @@ def get_appmap(app_id: UUID, request: Request, db: Session = Depends(get_db)):
         )
         return JSONResponse(status_code=404, content=problem.to_response_body())
     return appmap
+
+
+@router.get("/apps/{app_id}/discover-runs", response_model=DiscoverRunListResponse)
+def list_discover_runs(app_id: UUID, request: Request, db: Session = Depends(get_db)):
+    runs = appmap_diff_service.list_app_discover_runs(db, app_id)
+    if runs is None:
+        problem = ProblemDetail(
+            type="https://autonomous-qa.dev/errors/not-found",
+            title="Application Not Found",
+            status=404,
+            detail=f"No application exists with id {app_id}",
+            instance=str(request.url.path),
+        )
+        return JSONResponse(status_code=404, content=problem.to_response_body())
+    return runs
+
+
+@router.get("/apps/{app_id}/appmap/diff", response_model=AppMapDiffResponse)
+def get_appmap_diff(
+    app_id: UUID,
+    request: Request,
+    from_run: UUID,
+    to_run: UUID,
+    db: Session = Depends(get_db),
+):
+    try:
+        diff = appmap_diff_service.get_appmap_diff(
+            db,
+            app_id,
+            from_run_id=from_run,
+            to_run_id=to_run,
+        )
+    except appmap_diff_service.AppMapDiffError as exc:
+        return _problem_response(
+            request,
+            status=422,
+            title="AppMap Diff Error",
+            detail=str(exc),
+            problem_type="https://autonomous-qa.dev/errors/precondition",
+        )
+    if diff is None:
+        problem = ProblemDetail(
+            type="https://autonomous-qa.dev/errors/not-found",
+            title="Application Not Found",
+            status=404,
+            detail=f"No application exists with id {app_id}",
+            instance=str(request.url.path),
+        )
+        return JSONResponse(status_code=404, content=problem.to_response_body())
+    return diff
+
+
+@router.get("/apps/{app_id}/appmap/test-area-decisions", response_model=TestAreaDecisionsResponse)
+def get_test_area_decisions(app_id: UUID, request: Request, db: Session = Depends(get_db)):
+    result = test_area_decisions_service.get_test_area_decisions(db, app_id)
+    if result is None:
+        problem = ProblemDetail(
+            type="https://autonomous-qa.dev/errors/not-found",
+            title="Application Not Found",
+            status=404,
+            detail=f"No application exists with id {app_id}",
+            instance=str(request.url.path),
+        )
+        return JSONResponse(status_code=404, content=problem.to_response_body())
+    return result
+
+
+@router.put("/apps/{app_id}/appmap/test-area-decisions", response_model=TestAreaDecisionsResponse)
+def update_test_area_decisions(
+    app_id: UUID,
+    body: UpdateTestAreaDecisionsRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    try:
+        return test_area_decisions_service.update_test_area_decisions(db, app_id, body)
+    except appmap_approval_service.AppMapApprovalError as exc:
+        return _problem_response(
+            request,
+            status=422,
+            title="Test Area Decisions Error",
+            detail=exc.detail,
+            problem_type="https://autonomous-qa.dev/errors/precondition",
+        )
 
 
 @router.get("/apps/{app_id}/discovery-summary", response_model=DiscoverySummaryResponse)

@@ -16,9 +16,24 @@ from aqa_discovery.robots import RobotsChecker
 from aqa_discovery.safety import is_safety_excluded_link, is_safety_excluded_url
 from aqa_discovery.spa_views import expand_spa_views, is_virtual_view_url
 from aqa_discovery.spa_routes import collect_spa_route_events, install_spa_route_listener
-from aqa_discovery.types import CrawlHaltError, CrawlResult, CrawlStats, PageSnapshot
+from aqa_discovery.state_frontier import (
+    BASELINE_FINGERPRINT,
+    base_page_url,
+    collect_frontier_seeds,
+    merge_page_snapshots,
+    state_visit_key,
+)
+from aqa_discovery.types import (
+    CrawlHaltError,
+    CrawlResult,
+    CrawlStats,
+    InteractionAction,
+    PageSnapshot,
+    StateFrontierItem,
+)
 from aqa_discovery.url_utils import (
     is_allowed_domain,
+    is_crawl_seed_url,
     is_excluded_url,
     is_http_url,
     normalize_crawl_url,
@@ -82,6 +97,9 @@ class CrawlSession:
         viewport_height: int | None = None,
         app_id: uuid.UUID | None = None,
         capture_artifacts: bool = False,
+        known_fingerprints: dict[str, str] | None = None,
+        recrawl_urls: set[str] | None = None,
+        force_full_crawl: bool = False,
     ) -> None:
         self.page_timeout_ms = page_timeout_ms
         self.headless = headless
@@ -92,6 +110,9 @@ class CrawlSession:
         self.viewport_height = viewport_height
         self.app_id = app_id
         self.capture_artifacts = capture_artifacts
+        self.known_fingerprints = dict(known_fingerprints or {})
+        self.recrawl_urls = {url.split("?")[0].rstrip("/") for url in (recrawl_urls or set())}
+        self.force_full_crawl = force_full_crawl
         self._playwright = None
         self._browser = None
         self._context = None
@@ -236,6 +257,30 @@ class CrawlSession:
 
         return links
 
+    def _should_skip_deep_crawl(self, url: str, fingerprint: str, settings: CrawlSettings) -> bool:
+        if not settings.incremental_crawl or self.force_full_crawl:
+            return False
+        key = url.split("?")[0].rstrip("/")
+        if key in self.recrawl_urls:
+            return False
+        known = self.known_fingerprints.get(key)
+        return known is not None and known == fingerprint
+
+    def _execute_arrival_replay(
+        self,
+        page,
+        replay_path: list[InteractionAction],
+        settings: CrawlSettings,
+    ) -> None:
+        if not replay_path:
+            return
+        from aqa_discovery.cic.executor import execute_interaction
+        from aqa_discovery.cic.scope import CicScope
+
+        scope = CicScope(page=page, frame=None, frame_name="main")
+        for action in replay_path:
+            execute_interaction(scope, action, settings)
+
     def _visit_page(
         self,
         url: str,
@@ -244,6 +289,9 @@ class CrawlSession:
         settings: CrawlSettings,
         stats: CrawlStats | None = None,
         on_cic_progress: Callable[[str, CrawlStats, dict], None] | None = None,
+        arrival_replay_path: list[InteractionAction] | None = None,
+        explore_children_only: bool = False,
+        entry_depth: int = 0,
     ) -> tuple[PageSnapshot, list[str]]:
         if self._context is None:
             raise RuntimeError("CrawlSession is not active — use as a context manager")
@@ -251,7 +299,8 @@ class CrawlSession:
         page = self._context.new_page()
         crawl_stats = stats or CrawlStats()
         page_session_start = time.monotonic()
-        install_spa_route_listener(page)
+        if settings.enable_pushstate_listener:
+            install_spa_route_listener(page)
         network_capture = None
         if settings.capture_network:
             from aqa_discovery.network_capture import NetworkCapture
@@ -277,10 +326,52 @@ class CrawlSession:
             self._detect_captcha_or_mfa(page)
             self._perform_infinite_scroll(page, max_iterations=settings.max_scroll_iterations)
 
+            visit_url = base_page_url(url)
+            if arrival_replay_path and normalize_crawl_url(visit_url) == normalize_crawl_url(page.url):
+                self._execute_arrival_replay(page, arrival_replay_path, settings)
+
             status = response.status if response is not None else 0
             baseline_url = page.url
             if on_cic_progress is not None:
                 on_cic_progress(baseline_url, crawl_stats, {"phase": "page_loaded"})
+
+            from aqa_discovery.page_fingerprint import compute_page_content_fingerprint
+
+            baseline_elements, baseline_forms = capture_interactive_data(
+                page,
+                page_url=baseline_url,
+                allowed_domains=settings.allowed_domains,
+                pierce_shadow_dom=settings.pierce_shadow_dom,
+            )
+            content_fingerprint = compute_page_content_fingerprint(
+                url=baseline_url,
+                title=page.title(),
+                elements=baseline_elements,
+            )
+
+            if self._should_skip_deep_crawl(baseline_url, content_fingerprint, settings):
+                crawl_stats.skipped_unchanged += 1
+                links = self._extract_links(page, baseline_url)
+                snapshot = PageSnapshot(
+                    url=baseline_url,
+                    title=page.title(),
+                    status=status,
+                    html_length=len(page.content()),
+                    depth=depth,
+                    content_fingerprint=content_fingerprint,
+                    skipped_unchanged=True,
+                    elements=baseline_elements,
+                    forms=baseline_forms,
+                    api_endpoints=network_capture.collect() if network_capture else [],
+                    har_entries=network_capture.har_entries() if network_capture and settings.capture_har else [],
+                    network_events=network_capture.network_events() if network_capture else [],
+                    spa_route_events=collect_spa_route_events(page, source_page_url=baseline_url),
+                )
+                logger.info(
+                    "DiscoveryWorker skipped unchanged page (incremental crawl)",
+                    extra={"url": baseline_url, "fingerprint": content_fingerprint},
+                )
+                return snapshot, links
 
             if settings.enable_cic:
                 from aqa_discovery.cic.session import run_cic_session
@@ -297,6 +388,8 @@ class CrawlSession:
                     detect_blockers=self._detect_captcha_or_mfa,
                     on_progress=on_cic_progress,
                     session_start=page_session_start,
+                    explore_children_only=explore_children_only,
+                    entry_depth=entry_depth,
                 )
                 baseline_state = cic_result.states[0] if cic_result.states else None
                 if baseline_state:
@@ -307,6 +400,7 @@ class CrawlSession:
                         page,
                         page_url=baseline_url,
                         allowed_domains=settings.allowed_domains,
+                        pierce_shadow_dom=settings.pierce_shadow_dom,
                     )
                 screenshot_path: str | None = None
                 if self.capture_artifacts and self.app_id is not None:
@@ -326,6 +420,7 @@ class CrawlSession:
                     status=status,
                     html_length=html_len,
                     depth=depth,
+                    content_fingerprint=content_fingerprint,
                     elements=elements,
                     forms=forms,
                     api_endpoints=page_api_endpoints,
@@ -356,11 +451,6 @@ class CrawlSession:
                 return snapshot, links
 
             html = page.content()
-            elements, forms = capture_interactive_data(
-                page,
-                page_url=page.url,
-                allowed_domains=settings.allowed_domains,
-            )
             screenshot_path = None
             if self.capture_artifacts and self.app_id is not None:
                 dest = screenshot_path_for_page(app_id=self.app_id, url=page.url)
@@ -373,8 +463,9 @@ class CrawlSession:
                 status=status,
                 html_length=len(html),
                 depth=depth,
-                elements=elements,
-                forms=forms,
+                content_fingerprint=content_fingerprint,
+                elements=baseline_elements,
+                forms=baseline_forms,
                 api_endpoints=network_capture.collect() if network_capture else [],
                 screenshot_path=screenshot_path,
                 har_entries=network_capture.har_entries() if network_capture and settings.capture_har else [],
@@ -451,6 +542,13 @@ class CrawlSession:
         on_cic_progress: Callable[[str, CrawlStats, dict], None] | None = None,
     ) -> CrawlResult:
         """Breadth-first crawl with scope limits (SPEC §15.1–15.6, Day 16–17)."""
+        if settings.cic_global_state_graph:
+            return self.crawl_state_bfs(
+                start_urls,
+                settings,
+                on_progress=on_progress,
+                on_cic_progress=on_cic_progress,
+            )
         allowed = set(settings.allowed_domains)
         visited: set[str] = set()
         queue: deque[tuple[str, int]] = deque()
@@ -462,7 +560,7 @@ class CrawlSession:
         )
 
         for start in start_urls:
-            if not is_http_url(start):
+            if not is_crawl_seed_url(start):
                 continue
             key = normalize_crawl_url(start)
             if key in visited:
@@ -525,6 +623,19 @@ class CrawlSession:
                 if item.url not in all_enqueue:
                     all_enqueue.append(item.url)
 
+            if settings.enqueue_spa_route_urls and settings.enable_pushstate_listener:
+                from aqa_discovery.spa_routes import spa_urls_for_enqueue
+
+                for spa_url in spa_urls_for_enqueue(snapshot.spa_route_events):
+                    if spa_url not in all_enqueue:
+                        all_enqueue.append(spa_url)
+                        if on_cic_progress is not None:
+                            on_cic_progress(
+                                snapshot.url,
+                                stats,
+                                {"discovered_url": spa_url, "phase": "spa_route"},
+                            )
+
             if not all_enqueue:
                 continue
 
@@ -560,6 +671,176 @@ class CrawlSession:
             },
         )
         return self._build_crawl_result(pages, stats, settings, base_url=start_urls[0] if start_urls else "", allowed=allowed)
+
+    def crawl_state_bfs(
+        self,
+        start_urls: list[str],
+        settings: CrawlSettings,
+        *,
+        on_progress: Callable[[PageSnapshot, CrawlStats], None] | None = None,
+        on_cic_progress: Callable[[str, CrawlStats, dict], None] | None = None,
+    ) -> CrawlResult:
+        """Global (url, state) frontier BFS — Phase 2 state-graph crawling."""
+        if not (settings.cic_state_replay and settings.cic_level_bfs):
+            logger.warning(
+                "cic_global_state_graph requires cic_state_replay and cic_level_bfs; enabling both"
+            )
+            settings = settings.model_copy(
+                update={"cic_state_replay": True, "cic_level_bfs": True}
+            )
+
+        allowed = set(settings.allowed_domains)
+        enqueued: set[tuple[str, str]] = set()
+        completed_baselines: set[str] = set()
+        expanded_states: set[tuple[str, str]] = set()
+        queue: deque[StateFrontierItem] = deque()
+        pages_by_url: dict[str, PageSnapshot] = {}
+        stats = CrawlStats(max_pages=settings.max_pages, max_depth=settings.max_depth)
+        robots = RobotsChecker(
+            start_urls[0] if start_urls else "https://example.com",
+            enabled=settings.respect_robots_txt,
+        )
+
+        def _enqueue(seed: StateFrontierItem) -> None:
+            seed_url = base_page_url(seed.url)
+            seed_key = state_visit_key(seed_url, seed.state_fingerprint)
+            if seed_key in enqueued:
+                stats.skipped_duplicate += 1
+                return
+            if not is_allowed_domain(seed_url, allowed):
+                stats.skipped_off_domain += 1
+                return
+            if is_safety_excluded_url(seed_url):
+                stats.skipped_safety += 1
+                return
+            if is_excluded_url(seed_url, settings.excluded_urls):
+                stats.skipped_excluded += 1
+                return
+            if not robots.is_allowed(seed_url):
+                stats.skipped_robots += 1
+                return
+            enqueued.add(seed_key)
+            queue.append(seed)
+
+        for start in start_urls:
+            if not is_crawl_seed_url(start):
+                continue
+            if is_safety_excluded_url(start):
+                stats.skipped_safety += 1
+                continue
+            if not robots.is_allowed(start):
+                stats.skipped_robots += 1
+                continue
+            _enqueue(
+                StateFrontierItem(
+                    url=start,
+                    page_depth=0,
+                    state_fingerprint=BASELINE_FINGERPRINT,
+                )
+            )
+
+        while queue and len(pages_by_url) < settings.max_pages:
+            item = queue.popleft()
+            visit_url = base_page_url(item.url)
+            if is_virtual_view_url(item.url):
+                continue
+
+            visit_key = state_visit_key(visit_url, item.state_fingerprint)
+            if item.explore_children_only:
+                if visit_key in expanded_states:
+                    continue
+                expanded_states.add(visit_key)
+            elif not item.replay_path:
+                norm = normalize_crawl_url(visit_url)
+                if norm in completed_baselines:
+                    continue
+                completed_baselines.add(norm)
+
+            try:
+                snapshot, links = self._visit_page(
+                    visit_url,
+                    depth=item.page_depth,
+                    settings=settings,
+                    stats=stats,
+                    on_cic_progress=on_cic_progress,
+                    arrival_replay_path=item.replay_path,
+                    explore_children_only=item.explore_children_only,
+                    entry_depth=len(item.replay_path),
+                )
+            except CrawlHaltError as exc:
+                stats.pages_crawled = len(pages_by_url)
+                return self._build_crawl_result(
+                    list(pages_by_url.values()),
+                    stats,
+                    settings,
+                    base_url=start_urls[0] if start_urls else "",
+                    allowed=allowed,
+                    halted=True,
+                    halt_reason=exc.message,
+                    halt_url=exc.url or visit_url,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "DiscoveryWorker state frontier visit failed",
+                    extra={"url": visit_url, "error": str(exc)},
+                )
+                continue
+
+            page_key = normalize_crawl_url(visit_url)
+            if page_key in pages_by_url:
+                merge_page_snapshots(pages_by_url[page_key], snapshot)
+                merged = pages_by_url[page_key]
+            else:
+                pages_by_url[page_key] = snapshot
+                merged = snapshot
+
+            stats.pages_crawled = len(pages_by_url)
+            for page_snapshot in expand_spa_views(merged):
+                if on_progress is not None:
+                    on_progress(page_snapshot, stats)
+
+            states_budget_hit = (
+                not settings.cic_unlimited_interactions
+                and len(snapshot.states) >= settings.max_states_per_url
+            )
+            seeds = collect_frontier_seeds(
+                snapshot,
+                links,
+                page_depth=item.page_depth,
+                max_depth=settings.max_depth,
+                states_budget_hit=states_budget_hit,
+            )
+
+            if settings.enqueue_spa_route_urls and settings.enable_pushstate_listener:
+                from aqa_discovery.spa_routes import spa_urls_for_enqueue
+
+                for spa_url in spa_urls_for_enqueue(snapshot.spa_route_events):
+                    seeds.append(
+                        StateFrontierItem(
+                            url=spa_url,
+                            page_depth=item.page_depth + 1,
+                            state_fingerprint=BASELINE_FINGERPRINT,
+                        )
+                    )
+
+            for seed in seeds:
+                if len(pages_by_url) + len(queue) >= settings.max_pages:
+                    break
+                _enqueue(seed)
+
+        pages = list(pages_by_url.values())
+        stats.pages_crawled = len(pages)
+        logger.info(
+            "DiscoveryWorker state-graph BFS crawl finished",
+            extra={
+                "pagesCrawled": stats.pages_crawled,
+                "statesDiscovered": stats.states_discovered,
+                "enqueuedStateKeys": len(enqueued),
+            },
+        )
+        return self._build_crawl_result(
+            pages, stats, settings, base_url=start_urls[0] if start_urls else "", allowed=allowed
+        )
 
     def _merge_crawl_api_endpoints(
         self,

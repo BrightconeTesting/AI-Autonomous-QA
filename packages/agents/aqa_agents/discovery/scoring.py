@@ -99,7 +99,12 @@ def score_flow_risk(flow: dict[str, Any], elements_by_page: dict[str, list[dict[
     return _clamp_score(score), sorted(set(factors))
 
 
-def score_flow_complexity(flow: dict[str, Any]) -> tuple[int, list[str]]:
+def score_flow_complexity(
+    flow: dict[str, Any],
+    *,
+    pages_by_id: dict[str, dict[str, Any]] | None = None,
+    unmapped_mutating_apis: int = 0,
+) -> tuple[int, list[str]]:
     factors: list[str] = []
     steps = [s for s in (flow.get("steps") or []) if isinstance(s, dict)]
     score = 0.0
@@ -130,7 +135,211 @@ def score_flow_complexity(flow: dict[str, Any]) -> tuple[int, list[str]]:
             score += 8
             factors.append("file_upload")
 
+    if pages_by_id:
+        for page_id in page_ids:
+            page = pages_by_id.get(page_id) or {}
+            url = str(page.get("url") or "").lower()
+            if any(kw in url for kw in ("login", "signin", "auth")):
+                score += 10
+                factors.append("login_prerequisite")
+                break
+
+    if unmapped_mutating_apis > 0:
+        score += min(20, unmapped_mutating_apis * 10)
+        factors.append("unmapped_api_dependency")
+
     return _clamp_score(score), sorted(set(factors))
+
+
+def compute_priority_index(
+    *,
+    risk_score: int,
+    business_criticality: str = "medium",
+    testability_score: int = 50,
+    automation_complexity_score: int = 30,
+) -> int:
+    """Composite ranking for test areas (DISCOVERY-AGENT-VISION-SPEC §9.5.5)."""
+    criticality_weight = CRITICALITY_WEIGHTS.get(str(business_criticality).lower(), 50)
+    return _clamp_score(
+        0.35 * risk_score
+        + 0.25 * criticality_weight
+        + 0.25 * (100 - testability_score)
+        + 0.15 * automation_complexity_score
+    )
+
+
+def _form_field_elements(
+    form: dict[str, Any],
+    elements_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    for raw_id in form.get("field_element_ids") or []:
+        field_id = str(raw_id)
+        element = elements_by_id.get(field_id)
+        if element is not None:
+            fields.append(element)
+    return fields
+
+
+def score_form_risk(
+    form: dict[str, Any],
+    *,
+    elements_by_id: dict[str, dict[str, Any]],
+    api_ui_mappings: list[dict[str, Any]] | None = None,
+) -> tuple[int, list[str]]:
+    factors: list[str] = []
+    score = 0.0
+    method = str(form.get("method") or "get").lower()
+    attrs = dict(form.get("attributes") or {})
+    name_blob = f"{attrs.get('name', '')} {form.get('action') or ''} {form.get('name') or ''}".lower()
+
+    if method not in {"", "get"}:
+        score += 15
+        factors.append("mutating_form")
+
+    if any(kw in name_blob for kw in ("login", "register", "payment", "checkout", "password", "auth")):
+        score += 20
+        factors.append("auth_or_payment_form")
+
+    for element in _form_field_elements(form, elements_by_id):
+        text = str(element.get("text_content") or "").lower()
+        attrs_blob = str(element.get("attributes") or {}).lower()
+        if any(kw in text or kw in attrs_blob for kw in PII_KEYWORDS):
+            score += 10
+            factors.append("pii_fields")
+            break
+
+    form_id = str(form.get("form_id") or "")
+    if method not in {"", "get"}:
+        mapped = any(
+            float(mapping.get("confidence") or 0) >= 0.7
+            for mapping in (api_ui_mappings or [])
+            if str(mapping.get("form_id") or "") == form_id
+        )
+        if not mapped:
+            score += 10
+            factors.append("unmapped_mutating_form")
+
+    for element in _form_field_elements(form, elements_by_id):
+        selector = str(element.get("semantic_selector") or "")
+        if selector and not selector.startswith(("getByRole", "getByLabel", "getByTestId")):
+            score += 10
+            factors.append("weak_form_locators")
+            break
+
+    return _clamp_score(score), sorted(set(factors))
+
+
+def score_form_testability(
+    form: dict[str, Any],
+    *,
+    elements_by_id: dict[str, dict[str, Any]],
+) -> int:
+    field_elements = _form_field_elements(form, elements_by_id)
+    if not field_elements:
+        return 50
+    return _clamp_score(sum(score_element_testability(el) for el in field_elements) / len(field_elements))
+
+
+def score_api_endpoint_risk(
+    endpoint: dict[str, Any],
+    *,
+    api_ui_mappings: list[dict[str, Any]] | None = None,
+) -> tuple[int, list[str]]:
+    factors: list[str] = []
+    score = 0.0
+    method = str(endpoint.get("method") or "GET").upper()
+    path_blob = f"{endpoint.get('path_pattern') or ''} {endpoint.get('path') or ''}".lower()
+
+    if method not in {"GET", "HEAD", "OPTIONS"}:
+        score += 15
+        factors.append("mutating_api")
+
+    if any(kw in path_blob for kw in ("auth", "login", "session", "token", "oauth", "user", "payment", "admin")):
+        score += 20
+        factors.append("sensitive_api_path")
+
+    endpoint_id = str(endpoint.get("endpoint_id") or "")
+    mapped = any(
+        float(mapping.get("confidence") or 0) >= 0.7
+        for mapping in (api_ui_mappings or [])
+        if str(mapping.get("api_endpoint_id") or "") == endpoint_id
+    )
+    if method not in {"GET", "HEAD", "OPTIONS"} and not mapped:
+        score += 10
+        factors.append("unmapped_mutating_api")
+
+    return _clamp_score(score), sorted(set(factors))
+
+
+def score_api_endpoint_complexity(
+    endpoint: dict[str, Any],
+    *,
+    api_dependency_graph: dict[str, Any] | None = None,
+) -> tuple[int, list[str]]:
+    factors: list[str] = []
+    score = 0.0
+    endpoint_id = str(endpoint.get("endpoint_id") or "")
+    edges = list((api_dependency_graph or {}).get("edges") or [])
+    outgoing = [edge for edge in edges if str(edge.get("from_endpoint_id") or "") == endpoint_id]
+    if len(outgoing) >= 2:
+        score += 10
+        factors.append("api_dependency_chain")
+    elif outgoing:
+        score += 5
+        factors.append("api_dependency_edge")
+
+    method = str(endpoint.get("method") or "GET").upper()
+    if method not in {"GET", "HEAD", "OPTIONS"}:
+        score += 5
+        factors.append("mutating_setup")
+
+    return _clamp_score(score), sorted(set(factors))
+
+
+def score_entity_record(
+    entity: dict[str, Any],
+    *,
+    flows: list[dict[str, Any]],
+    module_criticality: str = "medium",
+) -> dict[str, Any]:
+    """Enrich entity with F+ scores and priority_index."""
+    enriched = dict(entity)
+    risk = int(entity.get("risk_score") or 20)
+    factors = list(entity.get("risk_factors") or [])
+    if not factors and entity.get("confidence_factors"):
+        factors = list(entity.get("confidence_factors") or [])
+
+    module_id = str(entity.get("module_id") or "")
+    entity_flows = [
+        flow
+        for flow in flows
+        if str(flow.get("module_id") or "") == module_id
+        or str(entity.get("entity_id") or "") in str(flow.get("name") or "").lower()
+    ]
+    crud = entity.get("crud_surfaces") or {}
+    has_surfaces = any(
+        (surface.get("api_endpoint_ids") or surface.get("form_ids") or surface.get("page_ids"))
+        for surface in crud.values()
+        if isinstance(surface, dict)
+    )
+    missing_flow = has_surfaces and not entity_flows
+    if missing_flow:
+        risk = max(risk, 35)
+        factors.append("crud_without_flow")
+
+    testability = 55
+    enriched["risk_score"] = _clamp_score(risk)
+    enriched["risk_factors"] = sorted(set(factors))
+    enriched["testability_score"] = testability
+    enriched["automation_complexity_score"] = _clamp_score(25 + (10 if missing_flow else 0))
+    enriched["priority_index"] = compute_priority_index(
+        risk_score=enriched["risk_score"],
+        business_criticality=str(entity.get("business_criticality") or module_criticality),
+        testability_score=testability,
+        automation_complexity_score=enriched["automation_complexity_score"],
+    )
+    return enriched
 
 
 def infer_business_criticality(
@@ -138,6 +347,8 @@ def infer_business_criticality(
     *,
     nav_index: int | None = None,
     overrides: dict[str, str] | None = None,
+    form_count: int = 0,
+    mutating_api_count: int = 0,
 ) -> str:
     module_id = str(module.get("module_id") or "")
     if overrides and module_id in overrides:
@@ -154,6 +365,10 @@ def infer_business_criticality(
 
     flow_count = len(module.get("flow_ids") or [])
     if flow_count >= 5:
+        bump = {"low": "medium", "medium": "high", "high": "critical", "critical": "critical"}
+        level = bump.get(level, level)
+
+    if form_count >= 2 or mutating_api_count >= 2:
         bump = {"low": "medium", "medium": "high", "high": "critical", "critical": "critical"}
         level = bump.get(level, level)
 
@@ -268,20 +483,91 @@ def apply_scoring(
     api_ui_mappings: list[dict[str, Any]] | None = None,
     data_entities: list[dict[str, Any]] | None = None,
     spa_routes: list[dict[str, Any]] | None = None,
+    api_dependency_graph: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Score flows/modules and return scoring_summary + enriched modules/flows."""
+    """Score flows/modules/forms/APIs/entities and return enriched AppMap records."""
     states = states or []
+    forms = list(forms or [])
+    api_endpoints = list(api_endpoints or [])
+    api_ui_mappings = list(api_ui_mappings or [])
+    data_entities = list(data_entities or [])
+
     elements_by_page: dict[str, list[dict[str, Any]]] = {}
+    elements_by_id: dict[str, dict[str, Any]] = {}
     for element in elements:
         pid = str(element.get("page_id") or "")
         elements_by_page.setdefault(pid, []).append(element)
+        element_id = str(element.get("element_id") or "")
+        if element_id:
+            elements_by_id[element_id] = element
+
+    pages_by_id = {str(page.get("page_id") or ""): page for page in pages if page.get("page_id")}
+
+    scored_forms: list[dict[str, Any]] = []
+    for form in forms:
+        risk, risk_factors = score_form_risk(
+            form, elements_by_id=elements_by_id, api_ui_mappings=api_ui_mappings
+        )
+        testability = score_form_testability(form, elements_by_id=elements_by_id)
+        enriched = dict(form)
+        enriched["risk_score"] = risk
+        enriched["risk_factors"] = risk_factors
+        enriched["testability_score"] = testability
+        enriched["priority_index"] = compute_priority_index(
+            risk_score=risk,
+            testability_score=testability,
+            automation_complexity_score=20 if str(form.get("method") or "get").lower() not in {"", "get"} else 10,
+        )
+        scored_forms.append(enriched)
+
+    scored_endpoints: list[dict[str, Any]] = []
+    unmapped_mutating_api_ids: set[str] = set()
+    for endpoint in api_endpoints:
+        risk, risk_factors = score_api_endpoint_risk(endpoint, api_ui_mappings=api_ui_mappings)
+        complexity, complexity_factors = score_api_endpoint_complexity(
+            endpoint, api_dependency_graph=api_dependency_graph
+        )
+        enriched = dict(endpoint)
+        enriched["risk_score"] = risk
+        enriched["risk_factors"] = risk_factors
+        enriched["automation_complexity_score"] = complexity
+        enriched["complexity_factors"] = complexity_factors
+        enriched["priority_index"] = compute_priority_index(
+            risk_score=risk,
+            testability_score=60,
+            automation_complexity_score=complexity,
+        )
+        scored_endpoints.append(enriched)
+        method = str(endpoint.get("method") or "GET").upper()
+        endpoint_id = str(endpoint.get("endpoint_id") or "")
+        if method not in {"GET", "HEAD", "OPTIONS"} and "unmapped_mutating_api" in risk_factors:
+            unmapped_mutating_api_ids.add(endpoint_id)
+
+    forms_by_page: dict[str, list[dict[str, Any]]] = {}
+    for form in scored_forms:
+        forms_by_page.setdefault(str(form.get("page_id") or ""), []).append(form)
+
+    endpoints_by_page: dict[str, list[dict[str, Any]]] = {}
+    for endpoint in scored_endpoints:
+        for page_id in endpoint.get("seen_on_page_ids") or []:
+            endpoints_by_page.setdefault(str(page_id), []).append(endpoint)
 
     scored_flows: list[dict[str, Any]] = []
     flow_scores: list[dict[str, Any]] = []
     for flow in flows:
         risk, risk_factors = score_flow_risk(flow, elements_by_page)
-        complexity, complexity_factors = score_flow_complexity(flow)
         page_ids = _flow_page_ids(flow)
+        flow_unmapped = sum(
+            1
+            for page_id in page_ids
+            for endpoint in endpoints_by_page.get(page_id, [])
+            if str(endpoint.get("endpoint_id") or "") in unmapped_mutating_api_ids
+        )
+        complexity, complexity_factors = score_flow_complexity(
+            flow,
+            pages_by_id=pages_by_id,
+            unmapped_mutating_apis=flow_unmapped,
+        )
         module_elements = [el for pid in page_ids for el in elements_by_page.get(pid, [])]
         testability = (
             sum(score_element_testability(el) for el in module_elements) / len(module_elements)
@@ -312,13 +598,23 @@ def apply_scoring(
         module_flows = [
             f for f in scored_flows if str(f.get("flow_id")) in {str(x) for x in (module.get("flow_ids") or [])}
         ]
+        module_forms = [form for pid in page_ids for form in forms_by_page.get(pid, [])]
+        module_endpoints = [endpoint for pid in page_ids for endpoint in endpoints_by_page.get(pid, [])]
 
         testability = (
             sum(score_element_testability(el) for el in module_elements) / len(module_elements)
             if module_elements
             else 50.0
         )
+        if module_forms:
+            testability = _clamp_score(
+                (testability + sum(form.get("testability_score", 50) for form in module_forms) / len(module_forms)) / 2
+            )
+
         risk = max((f.get("risk_score", 0) for f in module_flows), default=0)
+        risk = max(risk, max((form.get("risk_score", 0) for form in module_forms), default=0))
+        risk = max(risk, max((endpoint.get("risk_score", 0) for endpoint in module_endpoints), default=0))
+
         if module_elements:
             destructive_hits = sum(
                 1
@@ -329,18 +625,32 @@ def apply_scoring(
                 risk = max(risk, min(100, 20 + destructive_hits * 10))
 
         complexity_vals = [f.get("automation_complexity_score", 0) for f in module_flows]
+        if module_endpoints:
+            complexity_vals.extend(endpoint.get("automation_complexity_score", 0) for endpoint in module_endpoints)
         complexity = int(sum(complexity_vals) / len(complexity_vals)) if complexity_vals else 30
 
         risk_factors = sorted(
             {factor for f in module_flows for factor in (f.get("risk_factors") or [])}
+            | {factor for form in module_forms for factor in (form.get("risk_factors") or [])}
+            | {factor for endpoint in module_endpoints for factor in (endpoint.get("risk_factors") or [])}
         )
         complexity_factors = sorted(
             {factor for f in module_flows for factor in (f.get("complexity_factors") or [])}
+            | {factor for endpoint in module_endpoints for factor in (endpoint.get("complexity_factors") or [])}
         )
 
         nav_index = nav_roots.index(module_id) if module_id in nav_roots else None
+        mutating_api_count = sum(
+            1
+            for endpoint in module_endpoints
+            if str(endpoint.get("method") or "GET").upper() not in {"GET", "HEAD", "OPTIONS"}
+        )
         criticality = infer_business_criticality(
-            module, nav_index=nav_index, overrides=overrides if isinstance(overrides, dict) else None
+            module,
+            nav_index=nav_index,
+            overrides=overrides if isinstance(overrides, dict) else None,
+            form_count=len(module_forms),
+            mutating_api_count=mutating_api_count,
         )
 
         enriched = dict(module)
@@ -350,11 +660,30 @@ def apply_scoring(
         enriched["automation_complexity_score"] = _clamp_score(complexity)
         enriched["complexity_factors"] = complexity_factors
         enriched["business_criticality"] = criticality
+        enriched["priority_index"] = compute_priority_index(
+            risk_score=enriched["risk_score"],
+            business_criticality=criticality,
+            testability_score=enriched["testability_score"],
+            automation_complexity_score=enriched["automation_complexity_score"],
+        )
         scored_modules.append(enriched)
 
         module_risks.append(enriched["risk_score"])
         module_testability.append(enriched["testability_score"])
         module_complexity.append(enriched["automation_complexity_score"])
+
+    module_criticality_by_id = {
+        str(module.get("module_id") or ""): str(module.get("business_criticality") or "medium")
+        for module in scored_modules
+    }
+    scored_entities = [
+        score_entity_record(
+            entity,
+            flows=scored_flows,
+            module_criticality=module_criticality_by_id.get(str(entity.get("module_id") or ""), "medium"),
+        )
+        for entity in data_entities
+    ]
 
     auth_detected = any(
         any(kw in str(p.get("url") or "").lower() for kw in ("login", "signin", "auth"))
@@ -367,10 +696,10 @@ def apply_scoring(
         modules=scored_modules,
         crawl_config=crawl_config,
         auth_detected=auth_detected,
-        forms=forms,
-        api_endpoints=api_endpoints,
+        forms=scored_forms,
+        api_endpoints=scored_endpoints,
         api_ui_mappings=api_ui_mappings,
-        data_entities=data_entities,
+        data_entities=scored_entities,
         spa_routes=spa_routes,
     )
 
@@ -388,6 +717,13 @@ def apply_scoring(
         reverse=True,
     )[:5]
 
+    high_risk_forms = sum(1 for form in scored_forms if int(form.get("risk_score") or 0) >= 50)
+    mutating_apis = sum(
+        1
+        for endpoint in scored_endpoints
+        if str(endpoint.get("method") or "GET").upper() not in {"GET", "HEAD", "OPTIONS"}
+    )
+
     scoring_summary = {
         "app_risk_score": _clamp_score(sum(module_risks) / len(module_risks)) if module_risks else 0,
         "app_testability_score": _clamp_score(sum(module_testability) / len(module_testability))
@@ -401,12 +737,18 @@ def apply_scoring(
         "discovery_completeness_score": completeness,
         "high_risk_modules": [m["module_id"] for m in top_risk if m["risk_score"] >= 60],
         "top_risk_modules": top_risk,
+        "high_risk_form_count": high_risk_forms,
+        "mutating_api_count": mutating_apis,
+        "scored_entity_count": len(scored_entities),
         "recommendations": recommendations,
     }
 
     return {
         "modules": scored_modules,
         "flows": scored_flows,
+        "forms": scored_forms,
+        "api_endpoints": scored_endpoints,
+        "data_entities": scored_entities,
         "scoring_summary": scoring_summary,
         "discovery_completeness_score": completeness,
         "recommendations": recommendations,

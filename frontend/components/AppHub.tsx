@@ -3,6 +3,15 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiDependencyGraphView } from "@/components/ApiDependencyGraph";
+import { AppMapDiffPanel } from "@/components/AppMapDiffPanel";
+import { PersonaMergeDiff } from "@/components/PersonaMergeDiff";
+import { RecommendedTestAreasEditor } from "@/components/RecommendedTestAreasEditor";
+import { AuthIntelligenceCard } from "@/components/AuthIntelligenceCard";
+import { AppMapSectionNav, type AppMapSection } from "@/components/AppMapSectionNav";
+import { AppMapStatsStrip } from "@/components/AppMapStatsStrip";
+import { TestDataCatalogTable } from "@/components/TestDataCatalogTable";
+import { SpaRoutesPanel } from "@/components/SpaRoutesPanel";
 import { AppMapApprovalPanel } from "@/components/AppMapApprovalPanel";
 import { DiscoveryScoreCard } from "@/components/DiscoveryScoreCard";
 import { DiscoverySummaryPanel } from "@/components/DiscoverySummaryPanel";
@@ -45,7 +54,7 @@ import type {
   DiscoverySummaryResponse,
 } from "@/lib/types";
 
-type Tab = "overview" | "pages" | "appmap" | "scenarios" | "runs";
+type Tab = "overview" | "pages" | "appmap" | "forms" | "scenarios" | "runs";
 
 export function AppHub({ appId }: { appId: string }) {
   const router = useRouter();
@@ -76,7 +85,8 @@ export function AppHub({ appId }: { appId: string }) {
   const [discoverSettings, setDiscoverSettings] = useState(defaultDiscoverSettings);
   const [approval, setApproval] = useState<AppMapApprovalResponse | null>(null);
   const [skipApproval, setSkipApproval] = useState(() => loadSettings().skipAppmapApproval);
-  const [appmapView, setAppmapView] = useState<"modules" | "graph">("graph");
+  const [appmapView, setAppmapView] = useState<"modules" | "graph" | "apis" | "diff">("graph");
+  const [appmapSection, setAppmapSection] = useState<AppMapSection>("structure");
   const [moduleColorMode, setModuleColorMode] = useState<ModuleColorMode>("risk");
 
   const refreshDiscoverySummary = useCallback(async () => {
@@ -148,7 +158,15 @@ export function AppHub({ appId }: { appId: string }) {
   }, [load]);
 
   useEffect(() => {
-    if (tab !== "pages" && tab !== "appmap" && tab !== "overview") return;
+    if (
+      tab !== "pages" &&
+      tab !== "appmap" &&
+      tab !== "forms" &&
+      tab !== "scenarios" &&
+      tab !== "overview"
+    ) {
+      return;
+    }
     apiClient
       .getAppMap(appId)
       .then(setAppmap)
@@ -156,7 +174,7 @@ export function AppHub({ appId }: { appId: string }) {
     if (tab === "appmap") {
       refreshApproval();
     }
-    if (tab === "overview" || tab === "appmap") {
+    if (tab === "overview" || tab === "appmap" || tab === "forms") {
       refreshDiscoverySummary();
     }
   }, [appId, tab, events.length, refreshApproval, refreshDiscoverySummary]);
@@ -523,6 +541,7 @@ export function AppHub({ appId }: { appId: string }) {
     { id: "overview", label: "Overview" },
     { id: "pages", label: "Pages" },
     { id: "appmap", label: "AppMap" },
+    { id: "forms", label: "Forms" },
     { id: "scenarios", label: "Scenarios" },
     { id: "runs", label: "Runs" },
   ];
@@ -588,6 +607,8 @@ export function AppHub({ appId }: { appId: string }) {
         <div className="space-y-4">
           <DiscoverySummaryPanel summary={discoverySummary} loading={summaryLoading} />
           {appmap && <DiscoveryScoreCard appmap={appmap} />}
+          {appmap && <AuthIntelligenceCard appmap={appmap} />}
+          {appmap && <PersonaMergeDiff appmap={appmap} />}
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
             <p className="mb-3 text-sm font-medium">Crawl settings</p>
             <CrawlSettingsFields
@@ -673,7 +694,16 @@ export function AppHub({ appId }: { appId: string }) {
       )}
 
       {tab === "pages" && (
-        <PageGrid appId={appId} pages={appmap?.pages ?? []} />
+        <div className="space-y-4">
+          <SpaRoutesPanel appmap={appmap} />
+          <div>
+            <h3 className="mb-3 text-sm font-semibold text-[var(--text)]">Page screenshots</h3>
+            <PageGrid
+              appId={appId}
+              pages={(appmap?.pages ?? []).filter((page) => !page.url.includes("#__aqa_view__/"))}
+            />
+          </div>
+        </div>
       )}
 
       {tab === "appmap" && (
@@ -684,66 +714,117 @@ export function AppHub({ appId }: { appId: string }) {
             onApprove={handleApproveAppMap}
             onReject={handleRejectAppMap}
           />
-          <DiscoveryScoreCard appmap={appmap} />
-          <DiscoverySummaryPanel summary={discoverySummary} loading={summaryLoading} />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setAppmapView("modules")}
-              className={`rounded px-3 py-1.5 text-sm ${
-                appmapView === "modules"
-                  ? "bg-blue-600 text-white"
-                  : "border border-[var(--border)] text-[var(--muted)]"
-              }`}
-            >
-              Modules
-            </button>
-            <button
-              type="button"
-              onClick={() => setAppmapView("graph")}
-              className={`rounded px-3 py-1.5 text-sm ${
-                appmapView === "graph"
-                  ? "bg-blue-600 text-white"
-                  : "border border-[var(--border)] text-[var(--muted)]"
-              }`}
-            >
-              Graph
-            </button>
-            {appmap && appmap.schema_version >= 3 && (
-              <span className="self-center text-xs text-green-400">
-                AppMap v{appmap.schema_version}
-                {appmap.stats.module_count != null && ` · ${appmap.stats.module_count} modules`}
-                {appmap.discovery_completeness_score != null &&
-                  ` · ${appmap.discovery_completeness_score}% complete`}
-              </span>
-            )}
-            {(appmap?.modules?.length ?? 0) > 0 && (
-              <select
-                value={moduleColorMode}
-                onChange={(e) => setModuleColorMode(e.target.value as ModuleColorMode)}
-                className="ml-auto rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs"
-              >
-                <option value="none">Color: default</option>
-                <option value="risk">Color: risk</option>
-                <option value="testability">Color: testability</option>
-                <option value="complexity">Color: complexity</option>
-              </select>
-            )}
-          </div>
-          {appmapView === "modules" ? (
-            <ModuleTree
-              appmap={appmap}
-              colorMode={moduleColorMode}
-              onColorModeChange={setModuleColorMode}
-            />
-          ) : (
-            <AppMapGraph appmap={appmap} moduleColorMode={moduleColorMode} />
+          <AppMapStatsStrip appmap={appmap} />
+          <AppMapSectionNav section={appmapSection} onChange={setAppmapSection} />
+          {appmapSection === "insights" && (
+            <div className="space-y-4">
+              <DiscoveryScoreCard appmap={appmap} />
+              <DiscoverySummaryPanel summary={discoverySummary} loading={summaryLoading} />
+              <AuthIntelligenceCard appmap={appmap} />
+              <PersonaMergeDiff appmap={appmap} />
+            </div>
+          )}
+          {appmapSection === "structure" && (
+            <>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAppmapView("modules")}
+                  className={`rounded px-3 py-1.5 text-sm ${
+                    appmapView === "modules"
+                      ? "bg-blue-600 text-white"
+                      : "border border-[var(--border)] text-[var(--muted)]"
+                  }`}
+                >
+                  Modules
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAppmapView("graph")}
+                  className={`rounded px-3 py-1.5 text-sm ${
+                    appmapView === "graph"
+                      ? "bg-blue-600 text-white"
+                      : "border border-[var(--border)] text-[var(--muted)]"
+                  }`}
+                >
+                  Graph
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAppmapView("apis")}
+                  className={`rounded px-3 py-1.5 text-sm ${
+                    appmapView === "apis"
+                      ? "bg-blue-600 text-white"
+                      : "border border-[var(--border)] text-[var(--muted)]"
+                  }`}
+                >
+                  API flow
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAppmapView("diff")}
+                  className={`rounded px-3 py-1.5 text-sm ${
+                    appmapView === "diff"
+                      ? "bg-blue-600 text-white"
+                      : "border border-[var(--border)] text-[var(--muted)]"
+                  }`}
+                >
+                  Diff
+                </button>
+                {(appmap?.modules?.length ?? 0) > 0 && (
+                  <select
+                    value={moduleColorMode}
+                    onChange={(e) => setModuleColorMode(e.target.value as ModuleColorMode)}
+                    className="ml-auto rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs"
+                  >
+                    <option value="none">Color: default</option>
+                    <option value="risk">Color: risk</option>
+                    <option value="testability">Color: testability</option>
+                    <option value="complexity">Color: complexity</option>
+                  </select>
+                )}
+              </div>
+              {appmapView === "modules" ? (
+                <ModuleTree
+                  appmap={appmap}
+                  colorMode={moduleColorMode}
+                  onColorModeChange={setModuleColorMode}
+                />
+              ) : appmapView === "graph" ? (
+                <AppMapGraph appmap={appmap} moduleColorMode={moduleColorMode} />
+              ) : appmapView === "apis" ? (
+                <ApiDependencyGraphView
+                  graph={appmap?.api_dependency_graph}
+                  endpoints={appmap?.api_endpoints}
+                  authIntelligence={appmap?.auth_intelligence}
+                  flowAnalysis={appmap?.api_flow_analysis}
+                  apiCoverage={appmap?.api_coverage}
+                />
+              ) : (
+                <AppMapDiffPanel appId={appId} defaultToRunId={approval?.pipeline_run_id} />
+              )}
+            </>
           )}
         </div>
       )}
 
+      {tab === "forms" && (
+        <div className="space-y-4">
+          {appmap && (
+            <p className="text-sm text-[var(--muted)]">
+              {discoverySummary?.counts.forms ?? 0} forms discovered
+              {(appmap.stats.test_data_catalog_count ?? appmap.test_data_catalog?.length ?? 0) > 0 &&
+                ` · ${appmap.stats.test_data_catalog_count ?? appmap.test_data_catalog?.length} catalog fields`}
+            </p>
+          )}
+          <TestDataCatalogTable appmap={appmap} />
+        </div>
+      )}
+
       {tab === "scenarios" && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="space-y-4">
+          <RecommendedTestAreasEditor appId={appId} appmap={appmap} />
+          <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-4">
             <ScenarioFilters
               filters={filters}
@@ -770,6 +851,7 @@ export function AppHub({ appId }: { appId: string }) {
             />
           </div>
           <ExecutionMediaPanel highlight={highlight} onArtifactDeleted={load} />
+          </div>
         </div>
       )}
 

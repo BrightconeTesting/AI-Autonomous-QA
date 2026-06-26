@@ -13,7 +13,8 @@ from pathlib import Path
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from aqa_discovery.types import CrawlResult, FormSnapshot, PageSnapshot, UIStateSnapshot
+from aqa_discovery.interaction_safety import build_interaction_key
+from aqa_discovery.types import CrawlResult, ElementSnapshot, FormSnapshot, PageSnapshot, UIStateSnapshot
 from aqa_shared.db.models import (
     Application,
     Artifact,
@@ -143,6 +144,36 @@ def _upsert_page(
     return page
 
 
+def _element_attributes(item: ElementSnapshot) -> dict:
+    attrs = dict(item.attributes or {})
+    interaction_key = item.interaction_key or build_interaction_key(item)
+    if interaction_key:
+        attrs["interaction_key"] = interaction_key
+    return attrs
+
+
+def _mark_filled_form_fields(db: Session, *, page_id: uuid.UUID, snapshot: PageSnapshot) -> None:
+    """Record which form fields were filled during CIC so test data catalog can flag the rest."""
+    fill_keys = {
+        event.interaction_key
+        for event in snapshot.interaction_events
+        if event.action_type == "fill" and event.interaction_key
+    }
+    if not fill_keys:
+        return
+
+    elements = db.scalars(select(Element).where(Element.page_id == page_id)).all()
+    for element in elements:
+        attrs = dict(element.attributes or {})
+        interaction_key = str(attrs.get("interaction_key") or "")
+        if not interaction_key or interaction_key not in fill_keys:
+            continue
+        if attrs.get("filled_during_crawl"):
+            continue
+        attrs["filled_during_crawl"] = True
+        element.attributes = attrs
+
+
 def _replace_page_cic_data(
     db: Session,
     *,
@@ -235,7 +266,7 @@ def _replace_baseline_elements(
             text_content=item.text_content,
             semantic_selector=item.semantic_selector,
             xpath_fallback=item.xpath_fallback,
-            attributes=item.attributes,
+            attributes=_element_attributes(item),
         )
         db.add(row)
         db.flush()
@@ -263,7 +294,7 @@ def _replace_state_elements(
             text_content=item.text_content,
             semantic_selector=item.semantic_selector,
             xpath_fallback=item.xpath_fallback,
-            attributes=item.attributes,
+            attributes=_element_attributes(item),
         )
         db.add(row)
         db.flush()
@@ -325,6 +356,13 @@ def _upsert_page_discoveries(
         ).first()
         if existing is not None:
             continue
+        trigger_payload: dict = {}
+        if discovery.trigger_interaction:
+            trigger_payload = discovery.trigger_interaction.model_dump()
+        if discovery.arrival_replay_path:
+            trigger_payload["arrival_replay_path"] = [
+                action.model_dump() for action in discovery.arrival_replay_path
+            ]
         db.add(
             PageDiscovery(
                 app_id=app_id,
@@ -332,7 +370,7 @@ def _upsert_page_discoveries(
                 discovered_via=discovery.discovered_via,
                 source_page_id=page.page_id,
                 source_state_key=discovery.source_state_key,
-                trigger_action=discovery.trigger_interaction.model_dump() if discovery.trigger_interaction else {},
+                trigger_action=trigger_payload,
             )
         )
 
@@ -761,9 +799,12 @@ def persist_crawl_result(
     page_by_url: dict[str, Page] = {}
 
     for snapshot in crawl_result.pages:
+        if snapshot.skipped_unchanged:
+            continue
         page = _upsert_page(db, app_id=app_id, snapshot=snapshot)
         page_by_url[snapshot.url] = page
         states, elements = _replace_page_cic_data(db, app_id=app_id, page=page, snapshot=snapshot)
+        _mark_filled_form_fields(db, page_id=page.page_id, snapshot=snapshot)
         state_count += states
         element_count += elements
         page_count += 1

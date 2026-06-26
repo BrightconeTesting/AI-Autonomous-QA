@@ -17,8 +17,201 @@ _INTERACTIVE_SELECTOR = (
     "table button, table a[href], summary"
 )
 
+_SHADOW_PIERCE_EXTRACT_JS = """
+(selector) => {
+  const seen = new Set();
+  const collected = [];
+
+  function resolveFieldLabel(element) {
+    if (element.labels && element.labels.length > 0) {
+      return (element.labels[0].innerText || element.labels[0].textContent || '').trim().slice(0, 200);
+    }
+    const id = element.getAttribute('id');
+    if (id) {
+      const labelEl = element.ownerDocument.querySelector(`label[for="${CSS.escape(id)}"]`);
+      if (labelEl) return (labelEl.innerText || labelEl.textContent || '').trim().slice(0, 200);
+    }
+    const labelledBy = element.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const text = labelledBy.split(/\\s+/)
+        .map((part) => element.ownerDocument.getElementById(part))
+        .filter(Boolean)
+        .map((el) => (el.innerText || el.textContent || '').trim())
+        .filter(Boolean)
+        .join(' ');
+      if (text) return text.slice(0, 200);
+    }
+    const parentLabel = element.closest('label');
+    if (parentLabel) {
+      const clone = parentLabel.cloneNode(true);
+      clone.querySelectorAll('input,select,textarea').forEach((node) => node.remove());
+      const wrapped = (clone.innerText || clone.textContent || '').trim().replace(/\\s+/g, ' ');
+      if (wrapped) return wrapped.slice(0, 200);
+    }
+    let node = element;
+    for (let depth = 0; depth < 5; depth++) {
+      let prev = node.previousElementSibling;
+      while (prev) {
+        const text = (prev.innerText || prev.textContent || '').trim().replace(/\\s+/g, ' ');
+        if (text && text.length >= 2 && text.length <= 120) return text.slice(0, 200);
+        prev = prev.previousElementSibling;
+      }
+      if (!node.parentElement) break;
+      node = node.parentElement;
+      const direct = node.querySelector(':scope > label, :scope > span, :scope > p');
+      if (direct && direct !== element && !direct.contains(element)) {
+        const text = (direct.innerText || direct.textContent || '').trim().replace(/\\s+/g, ' ');
+        if (text && text.length >= 2 && text.length <= 120) return text.slice(0, 200);
+      }
+    }
+    return '';
+  }
+
+  function walk(root) {
+    root.querySelectorAll(selector).forEach(element => {
+      if (seen.has(element)) return;
+      seen.add(element);
+      collected.push(element);
+    });
+    root.querySelectorAll('*').forEach(node => {
+      if (node.shadowRoot) walk(node.shadowRoot);
+    });
+  }
+
+  function mapElement(element) {
+    const tag = element.tagName.toLowerCase();
+    const type = (element.getAttribute('type') || '').toLowerCase();
+    const roleAttr = element.getAttribute('role');
+    const ariaLabel = element.getAttribute('aria-label') || '';
+    const placeholder = element.getAttribute('placeholder') || '';
+    const testId = element.getAttribute('data-testid') || element.getAttribute('data-test-id') || '';
+    const id = element.getAttribute('id') || '';
+    const text = (element.innerText || element.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
+
+    let role = roleAttr || '';
+    if (!role) {
+      if (tag === 'a') role = 'link';
+      else if (tag === 'button') role = 'button';
+      else if (tag === 'select') role = 'combobox';
+      else if (tag === 'textarea') role = 'textbox';
+      else if (tag === 'input') {
+        if (type === 'checkbox') role = 'checkbox';
+        else if (type === 'radio') role = 'radio';
+        else if (type === 'submit' || type === 'button') role = 'button';
+        else role = 'textbox';
+      } else if (tag === 'summary') role = 'button';
+    }
+
+    let label = resolveFieldLabel(element);
+    if (!label && element.labels && element.labels.length > 0) {
+      label = (element.labels[0].innerText || element.labels[0].textContent || '').trim().slice(0, 200);
+    } else if (!label && id) {
+      const labelEl = element.ownerDocument.querySelector(`label[for="${CSS.escape(id)}"]`);
+      if (labelEl) {
+        label = (labelEl.innerText || labelEl.textContent || '').trim().slice(0, 200);
+      }
+    }
+
+    const accessibleName = ariaLabel || label || text;
+
+    function getXPath(el) {
+      if (el.id) return `//*[@id="${el.id.replace(/"/g, '\\\\"')}"]`;
+      const parts = [];
+      while (el && el.nodeType === Node.ELEMENT_NODE) {
+        let index = 1;
+        let sibling = el.previousElementSibling;
+        while (sibling) {
+          if (sibling.tagName === el.tagName) index += 1;
+          sibling = sibling.previousElementSibling;
+        }
+        parts.unshift(`${el.tagName.toLowerCase()}[${index}]`);
+        el = el.parentElement;
+      }
+      return '/' + parts.join('/');
+    }
+
+    const attributes = {};
+    for (const attr of ['id', 'name', 'type', 'href', 'value', 'class', 'aria-label', 'data-testid', 'aria-expanded', 'aria-haspopup', 'aria-controls', 'data-modal', 'required', 'pattern', 'min', 'max', 'minlength', 'maxlength', 'step']) {
+      const value = element.getAttribute(attr);
+      if (value !== null && value !== '') attributes[attr] = value.slice(0, 500);
+    }
+    if (element.required) attributes.required = 'true';
+    if (placeholder) attributes.placeholder = placeholder.slice(0, 500);
+    if (label) attributes.label = label.slice(0, 500);
+    if (element.getRootNode() instanceof ShadowRoot) attributes.shadowRoot = 'true';
+
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const visible = rect.width > 0 && rect.height > 0
+      && style.visibility !== 'hidden' && style.display !== 'none' && parseFloat(style.opacity || '1') > 0;
+
+    return {
+      tag,
+      role,
+      text,
+      label,
+      placeholder,
+      testId,
+      accessibleName,
+      xpath: getXPath(element),
+      attributes,
+      visible,
+    };
+  }
+
+  walk(document);
+  return collected.map(mapElement);
+}
+"""
+
 _EXTRACT_ELEMENTS_JS = """
-elements => elements.map(element => {
+elements => {
+  function resolveFieldLabel(element) {
+    if (element.labels && element.labels.length > 0) {
+      return (element.labels[0].innerText || element.labels[0].textContent || '').trim().slice(0, 200);
+    }
+    const id = element.getAttribute('id');
+    if (id) {
+      const labelEl = element.ownerDocument.querySelector(`label[for="${CSS.escape(id)}"]`);
+      if (labelEl) return (labelEl.innerText || labelEl.textContent || '').trim().slice(0, 200);
+    }
+    const labelledBy = element.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const text = labelledBy.split(/\\s+/)
+        .map((part) => element.ownerDocument.getElementById(part))
+        .filter(Boolean)
+        .map((el) => (el.innerText || el.textContent || '').trim())
+        .filter(Boolean)
+        .join(' ');
+      if (text) return text.slice(0, 200);
+    }
+    const parentLabel = element.closest('label');
+    if (parentLabel) {
+      const clone = parentLabel.cloneNode(true);
+      clone.querySelectorAll('input,select,textarea').forEach((node) => node.remove());
+      const wrapped = (clone.innerText || clone.textContent || '').trim().replace(/\\s+/g, ' ');
+      if (wrapped) return wrapped.slice(0, 200);
+    }
+    let node = element;
+    for (let depth = 0; depth < 5; depth++) {
+      let prev = node.previousElementSibling;
+      while (prev) {
+        const text = (prev.innerText || prev.textContent || '').trim().replace(/\\s+/g, ' ');
+        if (text && text.length >= 2 && text.length <= 120) return text.slice(0, 200);
+        prev = prev.previousElementSibling;
+      }
+      if (!node.parentElement) break;
+      node = node.parentElement;
+      const direct = node.querySelector(':scope > label, :scope > span, :scope > p');
+      if (direct && direct !== element && !direct.contains(element)) {
+        const text = (direct.innerText || direct.textContent || '').trim().replace(/\\s+/g, ' ');
+        if (text && text.length >= 2 && text.length <= 120) return text.slice(0, 200);
+      }
+    }
+    return '';
+  }
+
+  return elements.map(element => {
   const tag = element.tagName.toLowerCase();
   const type = (element.getAttribute('type') || '').toLowerCase();
   const roleAttr = element.getAttribute('role');
@@ -26,8 +219,6 @@ elements => elements.map(element => {
   const placeholder = element.getAttribute('placeholder') || '';
   const testId = element.getAttribute('data-testid') || element.getAttribute('data-test-id') || '';
   const id = element.getAttribute('id') || '';
-  const name = element.getAttribute('name') || '';
-  const href = element.getAttribute('href') || '';
   const text = (element.innerText || element.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
 
   let role = roleAttr || '';
@@ -44,10 +235,10 @@ elements => elements.map(element => {
     } else if (tag === 'summary') role = 'button';
   }
 
-  let label = '';
-  if (element.labels && element.labels.length > 0) {
+  let label = resolveFieldLabel(element);
+  if (!label && element.labels && element.labels.length > 0) {
     label = (element.labels[0].innerText || element.labels[0].textContent || '').trim().slice(0, 200);
-  } else if (id) {
+  } else if (!label && id) {
     const labelEl = element.ownerDocument.querySelector(`label[for="${CSS.escape(id)}"]`);
     if (labelEl) {
       label = (labelEl.innerText || labelEl.textContent || '').trim().slice(0, 200);
@@ -78,6 +269,8 @@ elements => elements.map(element => {
     if (value !== null && value !== '') attributes[attr] = value.slice(0, 500);
   }
   if (element.required) attributes.required = 'true';
+  if (placeholder) attributes.placeholder = placeholder.slice(0, 500);
+  if (label) attributes.label = label.slice(0, 500);
 
   const rect = element.getBoundingClientRect();
   const style = window.getComputedStyle(element);
@@ -96,7 +289,8 @@ elements => elements.map(element => {
     attributes,
     visible,
   };
-})
+});
+}
 """
 
 
@@ -137,11 +331,11 @@ def build_locators(raw: dict[str, Any]) -> tuple[str | None, str | None]:
     tag = (raw.get("tag") or "").strip()
     xpath = (raw.get("xpath") or "").strip() or None
 
-    if role and accessible_name:
-        return f"getByRole({json.dumps(role)}, {{ name: {_escape_js_string(accessible_name)} }})", xpath
-
     if label:
         return f"getByLabel({_escape_js_string(label)})", xpath
+
+    if role and accessible_name:
+        return f"getByRole({json.dumps(role)}, {{ name: {_escape_js_string(accessible_name)} }})", xpath
 
     if placeholder and tag in {"input", "textarea"}:
         return f"getByPlaceholder({_escape_js_string(placeholder)})", xpath
@@ -165,16 +359,20 @@ def extract_elements(
     *,
     page_url: str | None = None,
     allowed_domains: list[str] | None = None,
+    pierce_shadow_dom: bool = True,
 ) -> list[ElementSnapshot]:
     """Extract interactive elements from an open Playwright page or CIC scope."""
     target = scope if scope is not None else page
-    eval_fn = getattr(target, "eval_on_selector_all", None)
-    if eval_fn is None:
-        eval_fn = page.eval_on_selector_all
-    raw_elements: list[dict[str, Any]] = eval_fn(
-        _INTERACTIVE_SELECTOR,
-        _EXTRACT_ELEMENTS_JS,
-    )
+    if pierce_shadow_dom:
+        raw_elements = page.evaluate(_SHADOW_PIERCE_EXTRACT_JS, _INTERACTIVE_SELECTOR)
+    else:
+        eval_fn = getattr(target, "eval_on_selector_all", None)
+        if eval_fn is None:
+            eval_fn = page.eval_on_selector_all
+        raw_elements = eval_fn(
+            _INTERACTIVE_SELECTOR,
+            _EXTRACT_ELEMENTS_JS,
+        )
 
     snapshots: list[ElementSnapshot] = []
     seen: set[str] = set()
@@ -182,10 +380,22 @@ def extract_elements(
 
     for raw in raw_elements:
         semantic, xpath = build_locators(raw)
-        dedupe_key = semantic or xpath or raw.get("tag", "")
+        tag = str(raw.get("tag") or "").lower()
+        if tag in {"input", "textarea", "select"} and xpath:
+            dedupe_key = xpath
+        else:
+            dedupe_key = semantic or xpath or tag
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
+
+        base_attrs = dict(raw.get("attributes") or {})
+        if raw.get("label"):
+            base_attrs.setdefault("label", str(raw.get("label"))[:500])
+        if raw.get("placeholder"):
+            base_attrs.setdefault("placeholder", str(raw.get("placeholder"))[:500])
+        if raw.get("accessibleName"):
+            base_attrs.setdefault("accessible_name", str(raw.get("accessibleName"))[:500])
 
         attributes = enrich_element_attributes(
             tag_name=str(raw.get("tag") or "unknown"),
@@ -193,7 +403,7 @@ def extract_elements(
             text_content=(raw.get("text") or None),
             semantic_selector=semantic,
             xpath_fallback=xpath,
-            attributes=dict(raw.get("attributes") or {}),
+            attributes=base_attrs,
             page_url=resolved_page_url,
             allowed_domains=allowed_domains,
         )

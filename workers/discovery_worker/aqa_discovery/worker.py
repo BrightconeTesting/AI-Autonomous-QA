@@ -75,6 +75,8 @@ def _run_single_persona_crawl(
     persist_enabled: bool,
     persona_id: str | None,
     audit,
+    crawl_config: dict | None = None,
+    force_full_crawl: bool = False,
 ) -> CrawlResult:
     authenticated = False
 
@@ -87,6 +89,8 @@ def _run_single_persona_crawl(
                 current_url=_snapshot.url,
                 states_discovered=stats.states_discovered,
                 interactions_executed=stats.interactions_executed,
+                discovered_url=_snapshot.url if stats.pages_crawled > 0 else None,
+                current_module=_module_key_from_url(_snapshot.url),
             )
         if live_progress:
             states = len(_snapshot.states)
@@ -116,7 +120,16 @@ def _run_single_persona_crawl(
             discovered_url=meta.get("discovered_url"),
             view_label=meta.get("view_label"),
             phase=meta.get("phase"),
+            current_module=meta.get("current_module") or _module_key_from_url(current_url),
         )
+
+    from aqa_shared.discovery.feedback import urls_requiring_recrawl
+
+    stored_config = crawl_config if isinstance(crawl_config, dict) else {}
+    known_fingerprints = stored_config.get("page_fingerprints")
+    if not isinstance(known_fingerprints, dict):
+        known_fingerprints = {}
+    recrawl_urls = urls_requiring_recrawl(stored_config.get("discovery_feedback"))
 
     with CrawlSession(
         page_timeout_ms=settings.page_timeout_ms,
@@ -128,6 +141,9 @@ def _run_single_persona_crawl(
         viewport_height=settings.viewport_height,
         app_id=app.app_id if persist_enabled else None,
         capture_artifacts=persist_enabled,
+        known_fingerprints=known_fingerprints,
+        recrawl_urls=recrawl_urls,
+        force_full_crawl=force_full_crawl,
     ) as crawl:
         if auth_config:
             try:
@@ -190,6 +206,12 @@ def _build_start_urls(app: Application) -> list[str]:
     return urls
 
 
+def _module_key_from_url(url: str) -> str:
+    from aqa_shared.discovery.persona_merge import _module_key
+
+    return _module_key(url)
+
+
 def _publish_crawl_progress(
     pipeline_run_id: str,
     *,
@@ -201,6 +223,7 @@ def _publish_crawl_progress(
     discovered_url: str | None = None,
     view_label: str | None = None,
     phase: str | None = None,
+    current_module: str | None = None,
 ) -> None:
     payload: dict = {
         "stage": DISCOVERY_STAGE,
@@ -216,6 +239,9 @@ def _publish_crawl_progress(
         payload["view_label"] = view_label
     if phase:
         payload["phase"] = phase
+    module = current_module or _module_key_from_url(current_url)
+    if module:
+        payload["current_module"] = module
     publish_pipeline_event(
         pipeline_run_id,
         PipelineEventType.stage_progress,
@@ -249,7 +275,8 @@ def crawl_application(
 
         crawl_config = app.crawl_config if isinstance(app.crawl_config, dict) else {}
         discover = discover_config or {}
-        network_keys = ("capture_network", "capture_har", "openapi_url", "excluded_analytics_domains")
+        force_full_crawl = bool(discover.get("force") or (crawl_overrides or {}).get("force"))
+        network_keys = ("capture_network", "capture_har", "openapi_url", "excluded_analytics_domains", "enable_pushstate_listener", "enqueue_spa_route_urls")
         merged_overrides = {**(crawl_overrides or {})}
         for key in network_keys:
             if key in discover:
@@ -312,6 +339,8 @@ def crawl_application(
                     persist_enabled=persist_enabled,
                     persona_id=persona_id,
                     audit=_audit,
+                    crawl_config=crawl_config,
+                    force_full_crawl=force_full_crawl,
                 )
                 crawl_results.append(result)
                 persona_results.append(
@@ -337,6 +366,8 @@ def crawl_application(
                     persist_enabled=persist_enabled,
                     persona_id=None,
                     audit=_audit,
+                    crawl_config=crawl_config,
+                    force_full_crawl=force_full_crawl,
                 )
             )
 
@@ -357,12 +388,23 @@ def crawl_application(
 
         if persist_enabled and pipeline_uuid is not None and result.pages:
             try:
+                from aqa_discovery.page_fingerprint import build_page_fingerprint_index, merge_page_fingerprints
+
                 persist_result = persist_crawl_result(
                     session,
                     app_id=app.app_id,
                     pipeline_run_id=pipeline_uuid,
                     crawl_result=result,
                 )
+                fingerprint_updates = build_page_fingerprint_index(result.pages)
+                updated_config = dict(app.crawl_config or {})
+                updated_config["page_fingerprints"] = merge_page_fingerprints(
+                    updated_config.get("page_fingerprints")
+                    if isinstance(updated_config.get("page_fingerprints"), dict)
+                    else None,
+                    fingerprint_updates,
+                )
+                app.crawl_config = updated_config
                 update_last_crawl_at(session, app.app_id)
                 if result.halted:
                     mark_pipeline_failed(

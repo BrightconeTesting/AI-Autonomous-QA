@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CIC Tab Modal Form Fixture</title>
+  <style>
+    .panel { display: none; padding: 1rem; border: 1px solid #ccc; margin-top: 0.5rem; }
+    .panel.active { display: block; }
+    [role="dialog"][hidden] { display: none; }
+    [role="dialog"] { border: 1px solid #333; padding: 1rem; margin-top: 1rem; max-width: 28rem; }
+  </style>
+</head>
+<body>
+  <h1>Tab Modal Form Test</h1>
+  <div role="tablist">
+    <button role="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview">Overview</button>
+    <button role="tab" id="tab-items" aria-selected="false" aria-controls="panel-items">Items</button>
+  </div>
+  <div id="panel-overview" role="tabpanel" class="panel active">
+    <p>Overview panel — no modal here.</p>
+  </div>
+  <div id="panel-items" role="tabpanel" class="panel">
+    <p>Items panel</p>
+    <button id="open-add-modal" type="button" aria-haspopup="dialog" aria-controls="add-item-modal">Add item</button>
+  </div>
+  <div id="add-item-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+    <h2 id="modal-title">Add item</h2>
+    <label>Name <input type="text" name="item_name" aria-label="Item name" /></label>
+    <label>SKU <input type="text" name="item_sku" aria-label="Item SKU" /></label>
+    <label>Qty <input type="number" name="item_qty" aria-label="Item quantity" min="1" /></label>
+    <button id="modal-save" type="button">Save item</button>
+    <button type="button" aria-label="Close">Close</button>
+  </div>
+  <script>
+    document.querySelectorAll('[role="tab"]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('[role="tab"]').forEach(t => t.setAttribute('aria-selected', 'false'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        tab.setAttribute('aria-selected', 'true');
+        document.getElementById(tab.getAttribute('aria-controls')).classList.add('active');
+      });
+    });
+    const openBtn = document.getElementById('open-add-modal');
+    const modal = document.getElementById('add-item-modal');
+    openBtn.addEventListener('click', () => { modal.hidden = false; });
+    modal.querySelector('[aria-label="Close"]').addEventListener('click', () => { modal.hidden = true; });
+  </script>
+</body>
+</html>
